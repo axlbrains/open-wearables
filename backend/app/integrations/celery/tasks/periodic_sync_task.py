@@ -1,7 +1,7 @@
 from logging import getLogger
 
 from app.database import SessionLocal
-from app.integrations.celery.tasks.sync_vendor_data_task import sync_vendor_data
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas import SyncAllUsersResult
 from app.utils.structured_logging import log_structured
@@ -41,6 +41,13 @@ def sync_all_users(
         )
 
         for active_user_id in active_user_ids:
-            sync_vendor_data.delay(user_id=str(active_user_id), start_date=start_date, end_date=end_date)
+            dispatch_task(
+                RegisteredTask.SYNC_VENDOR_DATA,
+                kwargs={
+                    "user_id": str(active_user_id),
+                    "start_date": start_date,
+                    "end_date": end_date,
+                },
+            )
 
         return SyncAllUsersResult(users_for_sync=len(active_user_ids)).model_dump()

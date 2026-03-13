@@ -167,5 +167,18 @@ CLAUDE.local.md
 .claude/
 *.local.mdc
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
+terraform.tfvars
+*.auto.tfvars
+
 # Exception: AI tool configs that should be tracked
 !.gemini/settings.json

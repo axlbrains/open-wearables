@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 from pydantic import AnyHttpUrl, Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,11 +35,13 @@ class Settings(BaseSettings):
     cors_allow_all: bool = False
 
     # DATABASE SETTINGS
+    database_url: SecretStr | None = None
     db_host: str = "db"
     db_port: int = 5432
     db_name: str = "open-wearables"
     db_user: str = "open-wearables"
     db_password: SecretStr = SecretStr("open-wearables")
+    db_socket_path: str | None = None
 
     # Sentry
     SENTRY_ENABLED: bool = False
@@ -58,6 +61,24 @@ class Settings(BaseSettings):
     redis_db: int = 0
     redis_password: SecretStr | None = None
     redis_username: str | None = None  # Redis 6.0+ ACL
+    redis_url_override: SecretStr | None = Field(default=None, alias="REDIS_URL")
+
+    # TASK DISPATCH SETTINGS
+    task_dispatch_backend: str = "celery"  # celery | cloud_tasks
+    internal_task_api_enabled: bool = False
+    task_dispatcher_gcp_project_id: str | None = None
+    task_dispatcher_gcp_location: str | None = None
+    task_dispatcher_worker_base_url: str | None = None
+    task_dispatcher_service_account_email: str | None = None
+    task_dispatcher_audience: str | None = None
+    task_dispatcher_default_queue_name: str = "default"
+    task_dispatcher_sdk_sync_queue_name: str = "sdk-sync"
+    task_dispatcher_garmin_backfill_queue_name: str = "garmin-backfill"
+    task_payload_storage_backend: str = "inline"  # inline | filesystem | gcs
+    task_payload_inline_max_bytes: int = 256 * 1024
+    task_payload_local_dir: str = "/tmp/open-wearables-task-payloads"
+    task_payload_gcs_bucket: str | None = None
+    task_payload_gcs_prefix: str = "task-payloads"
 
     # ADMIN ACCOUNT SEED
     admin_email: str = "admin@admin.com"
@@ -148,6 +169,9 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         """Get Redis connection URL built from individual settings."""
+        if self.redis_url_override:
+            return self.redis_url_override.get_secret_value()
+
         auth_part = ""
         if self.redis_username and self.redis_password:
             auth_part = f"{self.redis_username}:{self.redis_password.get_secret_value()}@"
@@ -168,6 +192,16 @@ class Settings(BaseSettings):
 
     @property
     def db_uri(self) -> str:
+        if self.database_url:
+            return self.database_url.get_secret_value()
+
+        if self.db_socket_path:
+            return (
+                f"postgresql+psycopg://"
+                f"{self.db_user}:{self.db_password.get_secret_value()}"
+                f"@/{self.db_name}?host={quote_plus(self.db_socket_path)}"
+            )
+
         return (
             f"postgresql+psycopg://"
             f"{self.db_user}:{self.db_password.get_secret_value()}"

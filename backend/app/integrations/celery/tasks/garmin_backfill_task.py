@@ -20,6 +20,7 @@ from fastapi import HTTPException
 
 from app.database import SessionLocal
 from app.integrations.redis_client import get_redis_client
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.services.providers.factory import ProviderFactory
 from app.services.providers.garmin.backfill_config import (
@@ -761,9 +762,17 @@ def start_full_backfill(user_id: str) -> dict[str, Any]:
         )
 
         if pending:
-            trigger_backfill_for_type.apply_async(args=[user_id, pending[0]], countdown=1)
+            dispatch_task(
+                RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+                args=[user_id, pending[0]],
+                countdown=1,
+            )
         else:
-            trigger_next_pending_type.apply_async(args=[user_id], countdown=1)
+            dispatch_task(
+                RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                args=[user_id],
+                countdown=1,
+            )
 
         return {
             "status": "resumed",
@@ -793,7 +802,11 @@ def start_full_backfill(user_id: str) -> dict[str, Any]:
 
     # Trigger the first type (with small delay to avoid immediate burst)
     first_type = BACKFILL_DATA_TYPES[0]
-    trigger_backfill_for_type.apply_async(args=[user_id, first_type], countdown=1)
+    dispatch_task(
+        RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+        args=[user_id, first_type],
+        countdown=1,
+    )
 
     return {
         "status": "started",
@@ -879,7 +892,11 @@ def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
                 remaining=remaining,
                 user_id=user_id_str,
             )
-            check_triggered_timeout.apply_async(args=[user_id, data_type], countdown=remaining)
+            dispatch_task(
+                RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT,
+                args=[user_id, data_type],
+                countdown=remaining,
+            )
             return {"status": "rescheduled", "remaining": remaining}
 
     # 4. Mark as timed_out
@@ -896,7 +913,11 @@ def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
         record_timed_out_entry(user_id, data_type, get_current_window(user_id))
 
     # 5. Chain to next type
-    trigger_next_pending_type.apply_async(args=[user_id], countdown=DELAY_BETWEEN_TYPES)
+    dispatch_task(
+        RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+        args=[user_id],
+        countdown=DELAY_BETWEEN_TYPES,
+    )
 
     skip_count = get_type_skip_count(user_id_str, data_type)
     return {
@@ -1112,7 +1133,11 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                         user_id=user_id,
                     )
                 # Still trigger next type even if this one failed (with delay)
-                trigger_next_pending_type.apply_async(args=[user_id], countdown=delay)
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                    args=[user_id],
+                    countdown=delay,
+                )
                 return {"status": "failed", "error": error}
 
             # 409 duplicate — Garmin already processed this timeframe and won't
@@ -1130,7 +1155,11 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                     user_id=user_id,
                 )
                 mark_type_success(user_id, data_type)
-                trigger_next_pending_type.apply_async(args=[user_id], countdown=DELAY_BETWEEN_TYPES)
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                    args=[user_id],
+                    countdown=DELAY_BETWEEN_TYPES,
+                )
                 return {
                     "status": "duplicate_skipped",
                     "data_type": data_type,
@@ -1139,7 +1168,11 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                 }
 
             # Schedule timeout check in case Garmin never sends a webhook
-            check_triggered_timeout.apply_async(args=[user_id, data_type], countdown=TRIGGERED_TIMEOUT_SECONDS)
+            dispatch_task(
+                RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT,
+                args=[user_id, data_type],
+                countdown=TRIGGERED_TIMEOUT_SECONDS,
+            )
 
             return {
                 "status": "triggered",
@@ -1196,7 +1229,11 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                     user_id=user_id,
                 )
             # Try to continue with next type (with delay)
-            trigger_next_pending_type.apply_async(args=[user_id], countdown=delay)
+            dispatch_task(
+                RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                args=[user_id],
+                countdown=delay,
+            )
             return {"status": "failed", "error": error}
 
         except Exception as e:
@@ -1214,7 +1251,11 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
             )
             mark_type_failed(user_id, data_type, error)
             # Try to continue with next type (with small delay)
-            trigger_next_pending_type.apply_async(args=[user_id], countdown=DELAY_BETWEEN_TYPES)
+            dispatch_task(
+                RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                args=[user_id],
+                countdown=DELAY_BETWEEN_TYPES,
+            )
             return {"error": error}
 
 
@@ -1272,7 +1313,8 @@ def trigger_next_pending_type(user_id: str) -> dict[str, Any]:
                 setup_retry_window(user_id, next_entry["window"])
                 redis_client.setex(_get_key(user_id, "retry_current_type"), REDIS_TTL, next_entry["type"])
                 reset_type_status(user_id, next_entry["type"])
-                trigger_backfill_for_type.apply_async(
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
                     args=[user_id, next_entry["type"]],
                     countdown=DELAY_BETWEEN_TYPES,
                 )
@@ -1317,7 +1359,11 @@ def trigger_next_pending_type(user_id: str) -> dict[str, Any]:
                 total_windows=get_total_windows(user_id),
             )
             first_type = BACKFILL_DATA_TYPES[0]
-            trigger_backfill_for_type.apply_async(args=[user_id, first_type], countdown=DELAY_BETWEEN_TYPES)
+            dispatch_task(
+                RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+                args=[user_id, first_type],
+                countdown=DELAY_BETWEEN_TYPES,
+            )
             return {"status": "advancing_window", "window": current_window}
 
         # All windows exhausted -- check for retry phase
@@ -1336,7 +1382,8 @@ def trigger_next_pending_type(user_id: str) -> dict[str, Any]:
                 )
                 # Reset type status to pending for retry, then trigger
                 reset_type_status(user_id, first_entry["type"])
-                trigger_backfill_for_type.apply_async(
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
                     args=[user_id, first_entry["type"]],
                     countdown=DELAY_BETWEEN_TYPES,
                 )
@@ -1381,7 +1428,11 @@ def trigger_next_pending_type(user_id: str) -> dict[str, Any]:
     )
 
     # Add small delay between types to avoid rate limiting
-    trigger_backfill_for_type.apply_async(args=[user_id, next_type], countdown=DELAY_BETWEEN_TYPES)
+    dispatch_task(
+        RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+        args=[user_id, next_type],
+        countdown=DELAY_BETWEEN_TYPES,
+    )
 
     return {"status": "continuing", "next_type": next_type, "pending_count": len(pending_types)}
 
