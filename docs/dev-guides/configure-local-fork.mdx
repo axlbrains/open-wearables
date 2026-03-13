@@ -1,0 +1,64 @@
+---
+title: "Configure Local Fork"
+description: "How to set up and sync your local fork with the upstream repository."
+---
+
+When working on a fork (like the `axl-integration` fork), it's important to keep your local environment in sync with the main Open Wearables repository to receive updates, bug fixes, and new features.
+
+## 1. Configure Upstream Remote
+
+If you haven't already, add the main Open Wearables repository as a remote named `upstream`:
+
+```bash
+git remote add upstream https://github.com/the-momentum/open-wearables.git
+```
+
+To verify your remotes:
+```bash
+git remote -v
+```
+
+You should see both `origin` (your fork) and `upstream` (the main repository).
+
+## 2. Sync Your Fork
+
+To pull latest changes from the main repository into your local `main` branch:
+
+<Steps>
+  <Step title="Fetch from upstream">
+    Download all changes from the main repository without merging them yet:
+    ```bash
+    git fetch upstream
+    ```
+  </Step>
+  <Step title="Update main branch">
+    Switch to your local `main` branch and merge the upstream changes:
+    ```bash
+    git checkout main
+    git merge upstream/main
+    ```
+  </Step>
+  <Step title="Push to your fork">
+    Update your GitHub fork with the latest changes from upstream:
+    ```bash
+    git push origin main
+    ```
+  </Step>
+</Steps>
+
+## 3. Update Your Feature Branch
+
+If you are working on a feature branch (e.g., `axl-integration`) and want to include the latest changes from upstream:
+
+```bash
+git checkout axl-integration
+git merge main
+```
+
+If there are conflicts, resolve them and commit the results.
+
+## Why This Matters for GCP Overlay
+
+The Google Cloud Run deployment path is designed as a **fork-safe overlay**. By keeping your infrastructure changes in `infra/gcp/terraform` and using the task dispatcher abstraction, you minimize merge conflicts when pulling updates from upstream.
+
+Always sync your fork before starting a new feature or deploying infrastructure changes.
