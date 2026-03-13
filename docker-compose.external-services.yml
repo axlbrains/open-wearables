@@ -1,0 +1,40 @@
+services:
+  app:
+    environment:
+      DB_HOST: host.docker.internal
+      DB_PORT: 5432
+      DB_NAME: open-wearables
+      DB_USER: axluser
+      DB_PASSWORD: axlpass
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+
+  celery-worker:
+    environment:
+      DB_HOST: host.docker.internal
+      DB_PORT: 5432
+      DB_NAME: open-wearables
+      DB_USER: axluser
+      DB_PASSWORD: axlpass
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+
+  celery-beat:
+    environment:
+      DB_HOST: host.docker.internal
+      DB_PORT: 5432
+      DB_NAME: open-wearables
+      DB_USER: axluser
+      DB_PASSWORD: axlpass
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
+
+  flower:
+    environment:
+      DB_HOST: host.docker.internal
+      DB_PORT: 5432
+      DB_NAME: open-wearables
+      DB_USER: axluser
+      DB_PASSWORD: axlpass
+      REDIS_HOST: host.docker.internal
+      REDIS_PORT: 6379
