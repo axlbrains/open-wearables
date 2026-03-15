@@ -1,0 +1,774 @@
+[0m[1mmodule.open_wearables_stack.google_project_service.required["cloudscheduler.googleapis.com"]: Refreshing state... [id=axl-platform-prod/cloudscheduler.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["sqladmin.googleapis.com"]: Refreshing state... [id=axl-platform-prod/sqladmin.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["artifactregistry.googleapis.com"]: Refreshing state... [id=axl-platform-prod/artifactregistry.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["cloudtasks.googleapis.com"]: Refreshing state... [id=axl-platform-prod/cloudtasks.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["cloudbuild.googleapis.com"]: Refreshing state... [id=axl-platform-prod/cloudbuild.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["run.googleapis.com"]: Refreshing state... [id=axl-platform-prod/run.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["secretmanager.googleapis.com"]: Refreshing state... [id=axl-platform-prod/secretmanager.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["iam.googleapis.com"]: Refreshing state... [id=axl-platform-prod/iam.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["vpcaccess.googleapis.com"]: Refreshing state... [id=axl-platform-prod/vpcaccess.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["compute.googleapis.com"]: Refreshing state... [id=axl-platform-prod/compute.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_service.required["redis.googleapis.com"]: Refreshing state... [id=axl-platform-prod/redis.googleapis.com][0m
+[0m[1mmodule.open_wearables_stack.google_service_account.accounts["scheduler"]: Refreshing state... [id=projects/axl-platform-prod/serviceAccounts/open-wearables-prod-scheduler@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_service_account.accounts["deployer"]: Refreshing state... [id=projects/axl-platform-prod/serviceAccounts/open-wearables-prod-deployer@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_service_account.accounts["api"]: Refreshing state... [id=projects/axl-platform-prod/serviceAccounts/open-wearables-prod-api@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_service_account.accounts["worker"]: Refreshing state... [id=projects/axl-platform-prod/serviceAccounts/open-wearables-prod-worker@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_compute_network.main[0]: Refreshing state... [id=projects/axl-platform-prod/global/networks/open-wearables-prod-network][0m
+[0m[1mmodule.open_wearables_stack.google_cloud_tasks_queue.queues["default"]: Refreshing state... [id=projects/axl-platform-prod/locations/europe-west1/queues/open-wearables-prod-default][0m
+[0m[1mmodule.open_wearables_stack.google_service_account.accounts["migrator"]: Refreshing state... [id=projects/axl-platform-prod/serviceAccounts/open-wearables-prod-migrator@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_cloud_tasks_queue.queues["sdk_sync"]: Refreshing state... [id=projects/axl-platform-prod/locations/europe-west1/queues/open-wearables-prod-sdk-sync][0m
+[0m[1mmodule.open_wearables_stack.google_cloud_tasks_queue.queues["garmin_backfill"]: Refreshing state... [id=projects/axl-platform-prod/locations/europe-west1/queues/open-wearables-prod-garmin-backfill][0m
+[0m[1mmodule.open_wearables_stack.google_secret_manager_secret.secrets["open-wearables-prod-db-password"]: Refreshing state... [id=projects/axl-platform-prod/secrets/open-wearables-prod-db-password][0m
+[0m[1mmodule.open_wearables_stack.google_secret_manager_secret.secrets["open-wearables-prod-resend-api-key"]: Refreshing state... [id=projects/axl-platform-prod/secrets/open-wearables-prod-resend-api-key][0m
+[0m[1mmodule.open_wearables_stack.google_secret_manager_secret.secrets["open-wearables-prod-secret-key"]: Refreshing state... [id=projects/axl-platform-prod/secrets/open-wearables-prod-secret-key][0m
+[0m[1mmodule.open_wearables_stack.google_artifact_registry_repository.containers[0]: Refreshing state... [id=projects/axl-platform-prod/locations/europe-west1/repositories/open-wearables-prod][0m
+[0m[1mmodule.open_wearables_stack.google_compute_subnetwork.main[0]: Refreshing state... [id=projects/axl-platform-prod/regions/europe-west1/subnetworks/open-wearables-prod-subnet][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["api-roles_secretmanager.secretAccessor"]: Refreshing state... [id=axl-platform-prod/roles/secretmanager.secretAccessor/serviceAccount:open-wearables-prod-api@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["worker-roles_vpcaccess.user"]: Refreshing state... [id=axl-platform-prod/roles/vpcaccess.user/serviceAccount:open-wearables-prod-worker@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["migrator-roles_vpcaccess.user"]: Refreshing state... [id=axl-platform-prod/roles/vpcaccess.user/serviceAccount:open-wearables-prod-migrator@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["worker-roles_secretmanager.secretAccessor"]: Refreshing state... [id=axl-platform-prod/roles/secretmanager.secretAccessor/serviceAccount:open-wearables-prod-worker@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["worker-roles_cloudsql.client"]: Refreshing state... [id=axl-platform-prod/roles/cloudsql.client/serviceAccount:open-wearables-prod-worker@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["worker-roles_redis.editor"]: Refreshing state... [id=axl-platform-prod/roles/redis.editor/serviceAccount:open-wearables-prod-worker@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["api-roles_redis.editor"]: Refreshing state... [id=axl-platform-prod/roles/redis.editor/serviceAccount:open-wearables-prod-api@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["worker-roles_cloudtasks.enqueuer"]: Refreshing state... [id=axl-platform-prod/roles/cloudtasks.enqueuer/serviceAccount:open-wearables-prod-worker@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["migrator-roles_secretmanager.secretAccessor"]: Refreshing state... [id=axl-platform-prod/roles/secretmanager.secretAccessor/serviceAccount:open-wearables-prod-migrator@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["migrator-roles_cloudsql.client"]: Refreshing state... [id=axl-platform-prod/roles/cloudsql.client/serviceAccount:open-wearables-prod-migrator@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["scheduler-roles_run.invoker"]: Refreshing state... [id=axl-platform-prod/roles/run.invoker/serviceAccount:open-wearables-prod-scheduler@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["api-roles_vpcaccess.user"]: Refreshing state... [id=axl-platform-prod/roles/vpcaccess.user/serviceAccount:open-wearables-prod-api@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_project_iam_member.service_account_roles["api-roles_cloudsql.client"]: Refreshing state... [id=axl-platform-prod/roles/cloudsql.client/serviceAccount:open-wearables-prod-api@axl-platform-prod.iam.gserviceaccount.com][0m
+[0m[1mmodule.open_wearables_stack.google_cloud_run_v2_service.frontend[0]: Refreshing state... [id=projects/axl-platform-prod/locations/europe-west1/services/open-wearables-prod-frontend][0m
+
+Terraform used the selected providers to generate the following execution
+plan. Resource actions are indicated with the following symbols:
+  [32m+[0m create[0m
+[31m-[0m/[32m+[0m destroy and then create replacement[0m
+
+Terraform will perform the following actions:
+
+[1m  # module.open_wearables_stack.google_cloud_run_v2_job.backend_init[0][0m will be created
+[0m  [32m+[0m[0m resource "google_cloud_run_v2_job" "backend_init" {
+      [32m+[0m[0m conditions               = (known after apply)
+      [32m+[0m[0m create_time              = (known after apply)
+      [32m+[0m[0m creator                  = (known after apply)
+      [32m+[0m[0m delete_time              = (known after apply)
+      [32m+[0m[0m deletion_protection      = false
+      [32m+[0m[0m effective_annotations    = (known after apply)
+      [32m+[0m[0m effective_labels         = {
+          [32m+[0m[0m "app"                        = "open-wearables"
+          [32m+[0m[0m "component"                  = "backend-init"
+          [32m+[0m[0m "environment"                = "prod"
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+          [32m+[0m[0m "managed_by"                 = "terraform"
+        }
+      [32m+[0m[0m etag                     = (known after apply)
+      [32m+[0m[0m execution_count          = (known after apply)
+      [32m+[0m[0m expire_time              = (known after apply)
+      [32m+[0m[0m generation               = (known after apply)
+      [32m+[0m[0m id                       = (known after apply)
+      [32m+[0m[0m labels                   = {
+          [32m+[0m[0m "app"         = "open-wearables"
+          [32m+[0m[0m "component"   = "backend-init"
+          [32m+[0m[0m "environment" = "prod"
+          [32m+[0m[0m "managed_by"  = "terraform"
+        }
+      [32m+[0m[0m last_modifier            = (known after apply)
+      [32m+[0m[0m latest_created_execution = (known after apply)
+      [32m+[0m[0m launch_stage             = (known after apply)
+      [32m+[0m[0m location                 = "europe-west1"
+      [32m+[0m[0m name                     = "open-wearables-prod-init"
+      [32m+[0m[0m observed_generation      = (known after apply)
+      [32m+[0m[0m project                  = "axl-platform-prod"
+      [32m+[0m[0m reconciling              = (known after apply)
+      [32m+[0m[0m terminal_condition       = (known after apply)
+      [32m+[0m[0m terraform_labels         = {
+          [32m+[0m[0m "app"                        = "open-wearables"
+          [32m+[0m[0m "component"                  = "backend-init"
+          [32m+[0m[0m "environment"                = "prod"
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+          [32m+[0m[0m "managed_by"                 = "terraform"
+        }
+      [32m+[0m[0m uid                      = (known after apply)
+      [32m+[0m[0m update_time              = (known after apply)
+
+      [32m+[0m[0m template {
+          [32m+[0m[0m parallelism = (known after apply)
+          [32m+[0m[0m task_count  = (known after apply)
+
+          [32m+[0m[0m template {
+              [32m+[0m[0m execution_environment = (known after apply)
+              [32m+[0m[0m max_retries           = 1
+              [32m+[0m[0m service_account       = "open-wearables-prod-migrator@axl-platform-prod.iam.gserviceaccount.com"
+              [32m+[0m[0m timeout               = "600s"
+
+              [32m+[0m[0m containers {
+                  [32m+[0m[0m args    = []
+                  [32m+[0m[0m command = [
+                      [32m+[0m[0m "/app/scripts/start/cloud-run-init.sh",
+                    ]
+                  [32m+[0m[0m image   = "europe-west1-docker.pkg.dev/axl-platform-prod/open-wearables-prod/backend:latest"
+
+                  [32m+[0m[0m env (known after apply)
+
+                  [32m+[0m[0m resources {
+                      [32m+[0m[0m limits = {
+                          [32m+[0m[0m "cpu"    = "1000m"
+                          [32m+[0m[0m "memory" = "512Mi"
+                        }
+                    }
+
+                  [32m+[0m[0m startup_probe (known after apply)
+
+                  [32m+[0m[0m volume_mounts (known after apply)
+                }
+
+              [32m+[0m[0m volumes (known after apply)
+            }
+        }
+    }
+
+[1m  # module.open_wearables_stack.google_cloud_run_v2_service.backend_api[0][0m will be created
+[0m  [32m+[0m[0m resource "google_cloud_run_v2_service" "backend_api" {
+      [32m+[0m[0m conditions              = (known after apply)
+      [32m+[0m[0m create_time             = (known after apply)
+      [32m+[0m[0m creator                 = (known after apply)
+      [32m+[0m[0m delete_time             = (known after apply)
+      [32m+[0m[0m deletion_protection     = false
+      [32m+[0m[0m effective_annotations   = (known after apply)
+      [32m+[0m[0m effective_labels        = {
+          [32m+[0m[0m "app"                        = "open-wearables"
+          [32m+[0m[0m "component"                  = "backend-api"
+          [32m+[0m[0m "environment"                = "prod"
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+          [32m+[0m[0m "managed_by"                 = "terraform"
+        }
+      [32m+[0m[0m etag                    = (known after apply)
+      [32m+[0m[0m expire_time             = (known after apply)
+      [32m+[0m[0m generation              = (known after apply)
+      [32m+[0m[0m id                      = (known after apply)
+      [32m+[0m[0m ingress                 = "INGRESS_TRAFFIC_ALL"
+      [32m+[0m[0m labels                  = {
+          [32m+[0m[0m "app"         = "open-wearables"
+          [32m+[0m[0m "component"   = "backend-api"
+          [32m+[0m[0m "environment" = "prod"
+          [32m+[0m[0m "managed_by"  = "terraform"
+        }
+      [32m+[0m[0m last_modifier           = (known after apply)
+      [32m+[0m[0m latest_created_revision = (known after apply)
+      [32m+[0m[0m latest_ready_revision   = (known after apply)
+      [32m+[0m[0m launch_stage            = (known after apply)
+      [32m+[0m[0m location                = "europe-west1"
+      [32m+[0m[0m name                    = "open-wearables-prod-api"
+      [32m+[0m[0m observed_generation     = (known after apply)
+      [32m+[0m[0m project                 = "axl-platform-prod"
+      [32m+[0m[0m reconciling             = (known after apply)
+      [32m+[0m[0m terminal_condition      = (known after apply)
+      [32m+[0m[0m terraform_labels        = {
+          [32m+[0m[0m "app"                        = "open-wearables"
+          [32m+[0m[0m "component"                  = "backend-api"
+          [32m+[0m[0m "environment"                = "prod"
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+          [32m+[0m[0m "managed_by"                 = "terraform"
+        }
+      [32m+[0m[0m traffic_statuses        = (known after apply)
+      [32m+[0m[0m uid                     = (known after apply)
+      [32m+[0m[0m update_time             = (known after apply)
+      [32m+[0m[0m uri                     = (known after apply)
+      [32m+[0m[0m urls                    = (known after apply)
+
+      [32m+[0m[0m scaling (known after apply)
+
+      [32m+[0m[0m template {
+          [32m+[0m[0m max_instance_request_concurrency = 80
+          [32m+[0m[0m service_account                  = "open-wearables-prod-api@axl-platform-prod.iam.gserviceaccount.com"
+          [32m+[0m[0m timeout                          = "300s"
+
+          [32m+[0m[0m containers {
+              [32m+[0m[0m build_info = (known after apply)
+              [32m+[0m[0m image      = "europe-west1-docker.pkg.dev/axl-platform-prod/open-wearables-prod/backend:latest"
+
+              [32m+[0m[0m env (known after apply)
+
+              [32m+[0m[0m ports {
+                  [32m+[0m[0m container_port = 8000
+                  [32m+[0m[0m name           = (known after apply)
+                }
+
+              [32m+[0m[0m resources {
+                  [32m+[0m[0m limits = {
+                      [32m+[0m[0m "cpu"    = "1000m"
+                      [32m+[0m[0m "memory" = "512Mi"
+                    }
+                }
+
+              [32m+[0m[0m startup_probe (known after apply)
+
+              [32m+[0m[0m volume_mounts (known after apply)
+            }
+
+          [32m+[0m[0m scaling {
+              [32m+[0m[0m max_instance_count = 10
+              [32m+[0m[0m min_instance_count = 0
+            }
+
+          [32m+[0m[0m volumes (known after apply)
+        }
+
+      [32m+[0m[0m traffic (known after apply)
+    }
+
+[1m  # module.open_wearables_stack.google_cloud_run_v2_service.backend_worker[0][0m will be created
+[0m  [32m+[0m[0m resource "google_cloud_run_v2_service" "backend_worker" {
+      [32m+[0m[0m conditions              = (known after apply)
+      [32m+[0m[0m create_time             = (known after apply)
+      [32m+[0m[0m creator                 = (known after apply)
+      [32m+[0m[0m delete_time             = (known after apply)
+      [32m+[0m[0m deletion_protection     = false
+      [32m+[0m[0m effective_annotations   = (known after apply)
+      [32m+[0m[0m effective_labels        = {
+          [32m+[0m[0m "app"                        = "open-wearables"
+          [32m+[0m[0m "component"                  = "backend-worker"
+          [32m+[0m[0m "environment"                = "prod"
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+          [32m+[0m[0m "managed_by"                 = "terraform"
+        }
+      [32m+[0m[0m etag                    = (known after apply)
+      [32m+[0m[0m expire_time             = (known after apply)
+      [32m+[0m[0m generation              = (known after apply)
+      [32m+[0m[0m id                      = (known after apply)
+      [32m+[0m[0m ingress                 = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+      [32m+[0m[0m labels                  = {
+          [32m+[0m[0m "app"         = "open-wearables"
+          [32m+[0m[0m "component"   = "backend-worker"
+          [32m+[0m[0m "environment" = "prod"
+          [32m+[0m[0m "managed_by"  = "terraform"
+        }
+      [32m+[0m[0m last_modifier           = (known after apply)
+      [32m+[0m[0m latest_created_revision = (known after apply)
+      [32m+[0m[0m latest_ready_revision   = (known after apply)
+      [32m+[0m[0m launch_stage            = (known after apply)
+      [32m+[0m[0m location                = "europe-west1"
+      [32m+[0m[0m name                    = "open-wearables-prod-worker"
+      [32m+[0m[0m observed_generation     = (known after apply)
+      [32m+[0m[0m project                 = "axl-platform-prod"
+      [32m+[0m[0m reconciling             = (known after apply)
+      [32m+[0m[0m terminal_condition      = (known after apply)
+      [32m+[0m[0m terraform_labels        = {
+          [32m+[0m[0m "app"                        = "open-wearables"
+          [32m+[0m[0m "component"                  = "backend-worker"
+          [32m+[0m[0m "environment"                = "prod"
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+          [32m+[0m[0m "managed_by"                 = "terraform"
+        }
+      [32m+[0m[0m traffic_statuses        = (known after apply)
+      [32m+[0m[0m uid                     = (known after apply)
+      [32m+[0m[0m update_time             = (known after apply)
+      [32m+[0m[0m uri                     = (known after apply)
+      [32m+[0m[0m urls                    = (known after apply)
+
+      [32m+[0m[0m scaling (known after apply)
+
+      [32m+[0m[0m template {
+          [32m+[0m[0m max_instance_request_concurrency = 10
+          [32m+[0m[0m service_account                  = "open-wearables-prod-worker@axl-platform-prod.iam.gserviceaccount.com"
+          [32m+[0m[0m timeout                          = "3600s"
+
+          [32m+[0m[0m containers {
+              [32m+[0m[0m build_info = (known after apply)
+              [32m+[0m[0m image      = "europe-west1-docker.pkg.dev/axl-platform-prod/open-wearables-prod/backend:latest"
+
+              [32m+[0m[0m env (known after apply)
+
+              [32m+[0m[0m ports {
+                  [32m+[0m[0m container_port = 8000
+                  [32m+[0m[0m name           = (known after apply)
+                }
+
+              [32m+[0m[0m resources {
+                  [32m+[0m[0m limits = {
+                      [32m+[0m[0m "cpu"    = "1000m"
+                      [32m+[0m[0m "memory" = "1024Mi"
+                    }
+                }
+
+              [32m+[0m[0m startup_probe (known after apply)
+
+              [32m+[0m[0m volume_mounts (known after apply)
+            }
+
+          [32m+[0m[0m scaling {
+              [32m+[0m[0m max_instance_count = 5
+              [32m+[0m[0m min_instance_count = 0
+            }
+
+          [32m+[0m[0m volumes (known after apply)
+        }
+
+      [32m+[0m[0m traffic (known after apply)
+    }
+
+[1m  # module.open_wearables_stack.google_cloud_run_v2_service.frontend[0][0m is tainted, so must be [1m[31mreplaced[0m
+[0m[31m-[0m/[32m+[0m[0m resource "google_cloud_run_v2_service" "frontend" {
+      [31m-[0m[0m annotations             = {} [90m-> null[0m[0m
+      [33m~[0m[0m conditions              = [
+          [31m-[0m[0m {
+              [31m-[0m[0m last_transition_time = "2026-03-15T11:03:01.616820Z"
+              [31m-[0m[0m message              = "Image 'europe-west1-docker.pkg.dev/axl-platform-prod/open-wearables-prod/frontend:latest' not found."
+              [31m-[0m[0m reason               = "REVISION_FAILED"
+              [31m-[0m[0m state                = "CONDITION_FAILED"
+              [31m-[0m[0m type                 = "RoutesReady"
+                [90m# (3 unchanged attributes hidden)[0m[0m
+            },
+          [31m-[0m[0m {
+              [31m-[0m[0m last_transition_time = "2026-03-15T11:03:01.579733Z"
+              [31m-[0m[0m message              = "Image 'europe-west1-docker.pkg.dev/axl-platform-prod/open-wearables-prod/frontend:latest' not found."
+              [31m-[0m[0m state                = "CONDITION_FAILED"
+              [31m-[0m[0m type                 = "ConfigurationsReady"
+                [90m# (4 unchanged attributes hidden)[0m[0m
+            },
+        ] -> (known after apply)
+      [33m~[0m[0m create_time             = "2026-03-15T11:03:01.162539Z" -> (known after apply)
+      [33m~[0m[0m creator                 = "slava@axlbrains.com" -> (known after apply)
+      [31m-[0m[0m custom_audiences        = [] [90m-> null[0m[0m
+      [31m-[0m[0m default_uri_disabled    = false [90m-> null[0m[0m
+      [32m+[0m[0m delete_time             = (known after apply)
+      [33m~[0m[0m deletion_protection     = true [33m->[0m[0m false
+      [33m~[0m[0m effective_annotations   = {} -> (known after apply)
+      [33m~[0m[0m etag                    = "\"COWj2s0GEPjLwE0/cHJvamVjdHMvYXhsLXBsYXRmb3JtLXByb2QvbG9jYXRpb25zL2V1cm9wZS13ZXN0MS9zZXJ2aWNlcy9vcGVuLXdlYXJhYmxlcy1wcm9kLWZyb250ZW5k\"" -> (known after apply)
+      [32m+[0m[0m expire_time             = (known after apply)
+      [33m~[0m[0m generation              = "1" -> (known after apply)
+      [31m-[0m[0m iap_enabled             = false [90m-> null[0m[0m
+      [33m~[0m[0m id                      = "projects/axl-platform-prod/locations/europe-west1/services/open-wearables-prod-frontend" -> (known after apply)
+      [31m-[0m[0m invoker_iam_disabled    = false [90m-> null[0m[0m
+      [33m~[0m[0m last_modifier           = "slava@axlbrains.com" -> (known after apply)
+      [33m~[0m[0m latest_created_revision = "projects/axl-platform-prod/locations/europe-west1/services/open-wearables-prod-frontend/revisions/open-wearables-prod-frontend-00001-cmc" -> (known after apply)
+      [32m+[0m[0m latest_ready_revision   = (known after apply)
+      [33m~[0m[0m launch_stage            = "GA" -> (known after apply)
+        name                    = "open-wearables-prod-frontend"
+      [33m~[0m[0m observed_generation     = "1" -> (known after apply)
+      [33m~[0m[0m reconciling             = false -> (known after apply)
+      [33m~[0m[0m terminal_condition      = [
+          [31m-[0m[0m {
+              [31m-[0m[0m last_transition_time = "2026-03-15T11:03:01.616820Z"
+              [31m-[0m[0m message              = "Image 'europe-west1-docker.pkg.dev/axl-platform-prod/open-wearables-prod/frontend:latest' not found."
+              [31m-[0m[0m reason               = "REVISION_FAILED"
+              [31m-[0m[0m state                = "CONDITION_FAILED"
+              [31m-[0m[0m type                 = "Ready"
+                [90m# (3 unchanged attributes hidden)[0m[0m
+            },
+        ] -> (known after apply)
+      [33m~[0m[0m traffic_statuses        = [] -> (known after apply)
+      [33m~[0m[0m uid                     = "b3705450-6936-409e-ac43-4bc73befc80a" -> (known after apply)
+      [33m~[0m[0m update_time             = "2026-03-15T11:03:01.162539Z" -> (known after apply)
+      [32m+[0m[0m uri                     = (known after apply)
+      [33m~[0m[0m urls                    = [
+          [31m-[0m[0m "https://open-wearables-prod-frontend-489210400185.europe-west1.run.app",
+        ] -> (known after apply)
+        [90m# (9 unchanged attributes hidden)[0m[0m
+
+      [33m~[0m[0m scaling (known after apply)
+      [31m-[0m[0m scaling {
+          [31m-[0m[0m manual_instance_count = 0 [90m-> null[0m[0m
+          [31m-[0m[0m max_instance_count    = 20 [90m-> null[0m[0m
+          [31m-[0m[0m min_instance_count    = 0 [90m-> null[0m[0m
+            [90m# (1 unchanged attribute hidden)[0m[0m
+        }
+
+      [33m~[0m[0m template {
+          [31m-[0m[0m annotations                      = {} [90m-> null[0m[0m
+          [31m-[0m[0m gpu_zonal_redundancy_disabled    = false [90m-> null[0m[0m
+          [31m-[0m[0m health_check_disabled            = false [90m-> null[0m[0m
+          [31m-[0m[0m labels                           = {} [90m-> null[0m[0m
+          [31m-[0m[0m session_affinity                 = false [90m-> null[0m[0m
+            [90m# (6 unchanged attributes hidden)[0m[0m
+
+          [33m~[0m[0m containers {
+              [31m-[0m[0m args           = [] [90m-> null[0m[0m
+              [33m~[0m[0m build_info     = [] -> (known after apply)
+              [31m-[0m[0m command        = [] [90m-> null[0m[0m
+              [31m-[0m[0m depends_on     = [] [90m-> null[0m[0m
+                name           = [90mnull[0m[0m
+                [90m# (3 unchanged attributes hidden)[0m[0m
+
+              [33m~[0m[0m ports {
+                  [33m~[0m[0m name           = "http1" -> (known after apply)
+                    [90m# (1 unchanged attribute hidden)[0m[0m
+                }
+
+              [33m~[0m[0m resources {
+                  [31m-[0m[0m cpu_idle          = false [90m-> null[0m[0m
+                  [31m-[0m[0m startup_cpu_boost = false [90m-> null[0m[0m
+                    [90m# (1 unchanged attribute hidden)[0m[0m
+                }
+
+              [33m~[0m[0m startup_probe (known after apply)
+              [31m-[0m[0m startup_probe {
+                  [31m-[0m[0m failure_threshold     = 1 [90m-> null[0m[0m
+                  [31m-[0m[0m initial_delay_seconds = 0 [90m-> null[0m[0m
+                  [31m-[0m[0m period_seconds        = 240 [90m-> null[0m[0m
+                  [31m-[0m[0m timeout_seconds       = 240 [90m-> null[0m[0m
+
+                  [31m-[0m[0m tcp_socket {
+                      [31m-[0m[0m port = 3000 [90m-> null[0m[0m
+                    }
+                }
+
+                [90m# (1 unchanged block hidden)[0m[0m
+            }
+
+            [90m# (1 unchanged block hidden)[0m[0m
+        }
+
+      [33m~[0m[0m traffic (known after apply)
+      [31m-[0m[0m traffic {
+          [31m-[0m[0m percent  = 100 [90m-> null[0m[0m
+          [31m-[0m[0m type     = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST" [90m-> null[0m[0m
+            [90m# (2 unchanged attributes hidden)[0m[0m
+        }
+    }
+
+[1m  # module.open_wearables_stack.google_cloud_run_v2_service_iam_member.frontend_public_invoker[0][0m will be created
+[0m  [32m+[0m[0m resource "google_cloud_run_v2_service_iam_member" "frontend_public_invoker" {
+      [32m+[0m[0m etag     = (known after apply)
+      [32m+[0m[0m id       = (known after apply)
+      [32m+[0m[0m location = "europe-west1"
+      [32m+[0m[0m member   = "allUsers"
+      [32m+[0m[0m name     = "open-wearables-prod-frontend"
+      [32m+[0m[0m project  = "axl-platform-prod"
+      [32m+[0m[0m role     = "roles/run.invoker"
+    }
+
+[1m  # module.open_wearables_stack.google_cloud_run_v2_service_iam_member.worker_invokers["open-wearables-prod-scheduler@axl-platform-prod.iam.gserviceaccount.com"][0m will be created
+[0m  [32m+[0m[0m resource "google_cloud_run_v2_service_iam_member" "worker_invokers" {
+      [32m+[0m[0m etag     = (known after apply)
+      [32m+[0m[0m id       = (known after apply)
+      [32m+[0m[0m location = "europe-west1"
+      [32m+[0m[0m member   = "serviceAccount:open-wearables-prod-scheduler@axl-platform-prod.iam.gserviceaccount.com"
+      [32m+[0m[0m name     = "open-wearables-prod-worker"
+      [32m+[0m[0m project  = "axl-platform-prod"
+      [32m+[0m[0m role     = "roles/run.invoker"
+    }
+
+[1m  # module.open_wearables_stack.google_cloud_scheduler_job.default_jobs["finalize_stale_sleeps"][0m will be created
+[0m  [32m+[0m[0m resource "google_cloud_scheduler_job" "default_jobs" {
+      [32m+[0m[0m description = "Finalize stale sleep sessions"
+      [32m+[0m[0m id          = (known after apply)
+      [32m+[0m[0m name        = "open-wearables-prod-finalize-stale-sleeps"
+      [32m+[0m[0m paused      = (known after apply)
+      [32m+[0m[0m project     = "axl-platform-prod"
+      [32m+[0m[0m region      = "europe-west1"
+      [32m+[0m[0m schedule    = "30 * * * *"
+      [32m+[0m[0m state       = (known after apply)
+      [32m+[0m[0m time_zone   = "Etc/UTC"
+
+      [32m+[0m[0m http_target {
+          [32m+[0m[0m http_method = "POST"
+          [32m+[0m[0m uri         = (known after apply)
+
+          [32m+[0m[0m oidc_token {
+              [32m+[0m[0m audience              = (known after apply)
+              [32m+[0m[0m service_account_email = "open-wearables-prod-scheduler@axl-platform-prod.iam.gserviceaccount.com"
+            }
+        }
+    }
+
+[1m  # module.open_wearables_stack.google_cloud_scheduler_job.default_jobs["gc_stuck_backfills"][0m will be created
+[0m  [32m+[0m[0m resource "google_cloud_scheduler_job" "default_jobs" {
+      [32m+[0m[0m description = "Garmin backfill GC"
+      [32m+[0m[0m id          = (known after apply)
+      [32m+[0m[0m name        = "open-wearables-prod-gc-stuck-backfills"
+      [32m+[0m[0m paused      = (known after apply)
+      [32m+[0m[0m project     = "axl-platform-prod"
+      [32m+[0m[0m region      = "europe-west1"
+      [32m+[0m[0m schedule    = "0 2 * * *"
+      [32m+[0m[0m state       = (known after apply)
+      [32m+[0m[0m time_zone   = "Etc/UTC"
+
+      [32m+[0m[0m http_target {
+          [32m+[0m[0m http_method = "POST"
+          [32m+[0m[0m uri         = (known after apply)
+
+          [32m+[0m[0m oidc_token {
+              [32m+[0m[0m audience              = (known after apply)
+              [32m+[0m[0m service_account_email = "open-wearables-prod-scheduler@axl-platform-prod.iam.gserviceaccount.com"
+            }
+        }
+    }
+
+[1m  # module.open_wearables_stack.google_cloud_scheduler_job.default_jobs["sync_all_users"][0m will be created
+[0m  [32m+[0m[0m resource "google_cloud_scheduler_job" "default_jobs" {
+      [32m+[0m[0m description = "Run periodic vendor sync fan-out"
+      [32m+[0m[0m id          = (known after apply)
+      [32m+[0m[0m name        = "open-wearables-prod-sync-all-users"
+      [32m+[0m[0m paused      = (known after apply)
+      [32m+[0m[0m project     = "axl-platform-prod"
+      [32m+[0m[0m region      = "europe-west1"
+      [32m+[0m[0m schedule    = "0 * * * *"
+      [32m+[0m[0m state       = (known after apply)
+      [32m+[0m[0m time_zone   = "Etc/UTC"
+
+      [32m+[0m[0m http_target {
+          [32m+[0m[0m http_method = "POST"
+          [32m+[0m[0m uri         = (known after apply)
+
+          [32m+[0m[0m oidc_token {
+              [32m+[0m[0m audience              = (known after apply)
+              [32m+[0m[0m service_account_email = "open-wearables-prod-scheduler@axl-platform-prod.iam.gserviceaccount.com"
+            }
+        }
+    }
+
+[1m  # module.open_wearables_stack.google_cloudbuild_trigger.backend[0][0m will be created
+[0m  [32m+[0m[0m resource "google_cloudbuild_trigger" "backend" {
+      [32m+[0m[0m create_time   = (known after apply)
+      [32m+[0m[0m description   = "Build and deploy backend to Cloud Run"
+      [32m+[0m[0m filename      = "backend/cloudbuild.yaml"
+      [32m+[0m[0m id            = (known after apply)
+      [32m+[0m[0m location      = "global"
+      [32m+[0m[0m name          = "open-wearables-prod-backend"
+      [32m+[0m[0m project       = "axl-platform-prod"
+      [32m+[0m[0m substitutions = {
+          [32m+[0m[0m "_API_SERVICE"    = "open-wearables-prod-api"
+          [32m+[0m[0m "_IMAGE_NAME"     = "backend"
+          [32m+[0m[0m "_INIT_JOB"       = "open-wearables-prod-init"
+          [32m+[0m[0m "_REGION"         = "europe-west1"
+          [32m+[0m[0m "_REPOSITORY"     = "open-wearables-prod"
+          [32m+[0m[0m "_WORKER_SERVICE" = "open-wearables-prod-worker"
+        }
+      [32m+[0m[0m trigger_id    = (known after apply)
+
+      [32m+[0m[0m approval_config (known after apply)
+
+      [32m+[0m[0m github {
+            name  = [90mnull[0m[0m
+            [90m# (1 unchanged attribute hidden)[0m[0m
+
+          [32m+[0m[0m push {
+              [32m+[0m[0m branch = "^main$"
+            }
+        }
+    }
+
+[1m  # module.open_wearables_stack.google_cloudbuild_trigger.frontend[0][0m will be created
+[0m  [32m+[0m[0m resource "google_cloudbuild_trigger" "frontend" {
+      [32m+[0m[0m create_time   = (known after apply)
+      [32m+[0m[0m description   = "Build and deploy frontend to Cloud Run"
+      [32m+[0m[0m filename      = "frontend/cloudbuild.yaml"
+      [32m+[0m[0m id            = (known after apply)
+      [32m+[0m[0m location      = "global"
+      [32m+[0m[0m name          = "open-wearables-prod-frontend"
+      [32m+[0m[0m project       = "axl-platform-prod"
+      [32m+[0m[0m substitutions = {
+          [32m+[0m[0m "_IMAGE_NAME"   = "frontend"
+          [32m+[0m[0m "_REGION"       = "europe-west1"
+          [32m+[0m[0m "_REPOSITORY"   = "open-wearables-prod"
+          [32m+[0m[0m "_SERVICE_NAME" = "open-wearables-prod-frontend"
+        }
+      [32m+[0m[0m trigger_id    = (known after apply)
+
+      [32m+[0m[0m approval_config (known after apply)
+
+      [32m+[0m[0m github {
+            name  = [90mnull[0m[0m
+            [90m# (1 unchanged attribute hidden)[0m[0m
+
+          [32m+[0m[0m push {
+              [32m+[0m[0m branch = "^main$"
+            }
+        }
+    }
+
+[1m  # module.open_wearables_stack.google_compute_global_address.private_ip_address[0][0m will be created
+[0m  [32m+[0m[0m resource "google_compute_global_address" "private_ip_address" {
+      [32m+[0m[0m address            = (known after apply)
+      [32m+[0m[0m address_type       = "INTERNAL"
+      [32m+[0m[0m creation_timestamp = (known after apply)
+      [32m+[0m[0m effective_labels   = {
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+        }
+      [32m+[0m[0m id                 = (known after apply)
+      [32m+[0m[0m label_fingerprint  = (known after apply)
+      [32m+[0m[0m name               = "open-wearables-prod-private-ip"
+      [32m+[0m[0m network            = "projects/axl-platform-prod/global/networks/open-wearables-prod-network"
+      [32m+[0m[0m prefix_length      = 16
+      [32m+[0m[0m project            = "axl-platform-prod"
+      [32m+[0m[0m purpose            = "VPC_PEERING"
+      [32m+[0m[0m self_link          = (known after apply)
+      [32m+[0m[0m terraform_labels   = {
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+        }
+    }
+
+[1m  # module.open_wearables_stack.google_project_service.required["servicenetworking.googleapis.com"][0m will be created
+[0m  [32m+[0m[0m resource "google_project_service" "required" {
+      [32m+[0m[0m disable_on_destroy = false
+      [32m+[0m[0m id                 = (known after apply)
+      [32m+[0m[0m project            = "axl-platform-prod"
+      [32m+[0m[0m service            = "servicenetworking.googleapis.com"
+    }
+
+[1m  # module.open_wearables_stack.google_redis_instance.main[0][0m will be created
+[0m  [32m+[0m[0m resource "google_redis_instance" "main" {
+      [32m+[0m[0m alternative_location_id     = (known after apply)
+      [32m+[0m[0m auth_enabled                = false
+      [32m+[0m[0m auth_string                 = (sensitive value)
+      [32m+[0m[0m authorized_network          = "projects/axl-platform-prod/global/networks/open-wearables-prod-network"
+      [32m+[0m[0m connect_mode                = "PRIVATE_SERVICE_ACCESS"
+      [32m+[0m[0m create_time                 = (known after apply)
+      [32m+[0m[0m current_location_id         = (known after apply)
+      [32m+[0m[0m effective_labels            = {
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+        }
+      [32m+[0m[0m effective_reserved_ip_range = (known after apply)
+      [32m+[0m[0m host                        = (known after apply)
+      [32m+[0m[0m id                          = (known after apply)
+      [32m+[0m[0m location_id                 = (known after apply)
+      [32m+[0m[0m maintenance_schedule        = (known after apply)
+      [32m+[0m[0m maintenance_version         = (known after apply)
+      [32m+[0m[0m memory_size_gb              = 1
+      [32m+[0m[0m name                        = "open-wearables-prod-redis"
+      [32m+[0m[0m nodes                       = (known after apply)
+      [32m+[0m[0m persistence_iam_identity    = (known after apply)
+      [32m+[0m[0m port                        = (known after apply)
+      [32m+[0m[0m project                     = "axl-platform-prod"
+      [32m+[0m[0m read_endpoint               = (known after apply)
+      [32m+[0m[0m read_endpoint_port          = (known after apply)
+      [32m+[0m[0m read_replicas_mode          = (known after apply)
+      [32m+[0m[0m redis_version               = "REDIS_7_0"
+      [32m+[0m[0m region                      = "europe-west1"
+      [32m+[0m[0m replica_count               = (known after apply)
+      [32m+[0m[0m reserved_ip_range           = (known after apply)
+      [32m+[0m[0m secondary_ip_range          = (known after apply)
+      [32m+[0m[0m server_ca_certs             = (known after apply)
+      [32m+[0m[0m terraform_labels            = {
+          [32m+[0m[0m "goog-terraform-provisioned" = "true"
+        }
+      [32m+[0m[0m tier                        = "BASIC"
+      [32m+[0m[0m transit_encryption_mode     = "DISABLED"
+
+      [32m+[0m[0m persistence_config (known after apply)
+    }
+
+[1m  # module.open_wearables_stack.google_service_networking_connection.private_vpc_connection[0][0m will be created
+[0m  [32m+[0m[0m resource "google_service_networking_connection" "private_vpc_connection" {
+      [32m+[0m[0m id                      = (known after apply)
+      [32m+[0m[0m network                 = "projects/axl-platform-prod/global/networks/open-wearables-prod-network"
+      [32m+[0m[0m peering                 = (known after apply)
+      [32m+[0m[0m reserved_peering_ranges = [
+          [32m+[0m[0m "open-wearables-prod-private-ip",
+        ]
+      [32m+[0m[0m service                 = "servicenetworking.googleapis.com"
+    }
+
+[1m  # module.open_wearables_stack.google_sql_database.app[0][0m will be created
+[0m  [32m+[0m[0m resource "google_sql_database" "app" {
+      [32m+[0m[0m charset         = (known after apply)
+      [32m+[0m[0m collation       = (known after apply)
+      [32m+[0m[0m deletion_policy = "DELETE"
+      [32m+[0m[0m id              = (known after apply)
+      [32m+[0m[0m instance        = "open-wearables-prod-db"
+      [32m+[0m[0m name            = "open-wearables"
+      [32m+[0m[0m project         = "axl-platform-prod"
+      [32m+[0m[0m self_link       = (known after apply)
+    }
+
+[1m  # module.open_wearables_stack.google_sql_database_instance.main[0][0m will be created
+[0m  [32m+[0m[0m resource "google_sql_database_instance" "main" {
+      [32m+[0m[0m available_maintenance_versions = (known after apply)
+      [32m+[0m[0m connection_name                = (known after apply)
+      [32m+[0m[0m database_version               = "POSTGRES_17"
+      [32m+[0m[0m deletion_protection            = true
+      [32m+[0m[0m dns_name                       = (known after apply)
+      [32m+[0m[0m dns_names                      = (known after apply)
+      [32m+[0m[0m encryption_key_name            = (known after apply)
+      [32m+[0m[0m first_ip_address               = (known after apply)
+      [32m+[0m[0m id                             = (known after apply)
+      [32m+[0m[0m instance_type                  = (known after apply)
+      [32m+[0m[0m ip_address                     = (known after apply)
+      [32m+[0m[0m maintenance_version            = (known after apply)
+      [32m+[0m[0m master_instance_name           = (known after apply)
+      [32m+[0m[0m name                           = "open-wearables-prod-db"
+      [32m+[0m[0m node_count                     = (known after apply)
+      [32m+[0m[0m private_ip_address             = (known after apply)
+      [32m+[0m[0m project                        = "axl-platform-prod"
+      [32m+[0m[0m psc_service_attachment_link    = (known after apply)
+      [32m+[0m[0m public_ip_address              = (known after apply)
+      [32m+[0m[0m region                         = "europe-west1"
+      [32m+[0m[0m replica_names                  = (known after apply)
+      [32m+[0m[0m root_password_wo               = (write-only attribute)
+      [32m+[0m[0m self_link                      = (known after apply)
+      [32m+[0m[0m server_ca_cert                 = (sensitive value)
+      [32m+[0m[0m service_account_email_address  = (known after apply)
+
+      [32m+[0m[0m replica_configuration (known after apply)
+
+      [32m+[0m[0m replication_cluster (known after apply)
+
+      [32m+[0m[0m settings {
+          [32m+[0m[0m activation_policy           = "ALWAYS"
+          [32m+[0m[0m availability_type           = "ZONAL"
+          [32m+[0m[0m connector_enforcement       = (known after apply)
+          [32m+[0m[0m data_api_access             = (known after apply)
+          [32m+[0m[0m disk_autoresize             = true
+          [32m+[0m[0m disk_autoresize_limit       = 0
+          [32m+[0m[0m disk_size                   = 10
+          [32m+[0m[0m disk_type                   = "PD_SSD"
+          [32m+[0m[0m edition                     = (known after apply)
+          [32m+[0m[0m effective_availability_type = (known after apply)
+          [32m+[0m[0m pricing_plan                = "PER_USE"
+          [32m+[0m[0m tier                        = "db-f1-micro"
+          [32m+[0m[0m user_labels                 = (known after apply)
+          [32m+[0m[0m version                     = (known after apply)
+
+          [32m+[0m[0m backup_configuration {
+              [32m+[0m[0m backup_tier                    = (known after apply)
+              [32m+[0m[0m enabled                        = true
+              [32m+[0m[0m start_time                     = (known after apply)
+              [32m+[0m[0m transaction_log_retention_days = (known after apply)
+
+              [32m+[0m[0m backup_retention_settings (known after apply)
+            }
+
+          [32m+[0m[0m connection_pool_config (known after apply)
+
+          [32m+[0m[0m data_cache_config (known after apply)
+
+          [32m+[0m[0m insights_config (known after apply)
+
+          [32m+[0m[0m ip_configuration {
+              [32m+[0m[0m ipv4_enabled   = true
+              [32m+[0m[0m server_ca_mode = (known after apply)
+              [32m+[0m[0m ssl_mode       = (known after apply)
+            }
+
+          [32m+[0m[0m location_preference (known after apply)
+
+          [32m+[0m[0m read_pool_auto_scale_config (known after apply)
+        }
+    }
+
+[1m  # module.open_wearables_stack.google_sql_user.app[0][0m will be created
+[0m  [32m+[0m[0m resource "google_sql_user" "app" {
+      [32m+[0m[0m host                    = (known after apply)
+      [32m+[0m[0m iam_email               = (known after apply)
+      [32m+[0m[0m id                      = (known after apply)
+      [32m+[0m[0m instance                = "open-wearables-prod-db"
+      [32m+[0m[0m name                    = "open_wearables"
+      [32m+[0m[0m password                = (sensitive value)
+      [32m+[0m[0m password_wo             = (write-only attribute)
+      [32m+[0m[0m project                 = "axl-platform-prod"
+      [32m+[0m[0m sql_server_user_details = (known after apply)
+    }
+
+[1mPlan:[0m 18 to add, 0 to change, 1 to destroy.
+[0m
+Changes to Outputs:
+  [32m+[0m[0m backend_api_url                  = (known after apply)
+  [32m+[0m[0m backend_worker_url               = (known after apply)
+  [32m+[0m[0m cloud_sql_connection_name        = (known after apply)
+  [32m+[0m[0m frontend_url                     = (known after apply)
+  [32m+[0m[0m redis_host                       = (known after apply)
+[90m
+─────────────────────────────────────────────────────────────────────────────[0m
+
+Note: You didn't use the -out option to save this plan, so Terraform can't
+guarantee to take exactly these actions if you run "terraform apply" now.

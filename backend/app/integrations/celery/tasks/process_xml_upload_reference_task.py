@@ -7,16 +7,16 @@ from celery import shared_task
 
 @shared_task
 def process_xml_upload_reference(
-    payload_ref: dict[str, Any],
+    payload_reference: dict[str, Any],
     filename: str,
     user_id: str,
 ) -> dict[str, Any]:
     try:
-        file_contents = load_task_payload(payload_ref)
+        file_contents = load_task_payload(payload_reference)
         return process_xml_upload(
             file_contents=file_contents,
             filename=filename,
             user_id=user_id,
         )
     finally:
-        delete_task_payload(payload_ref)
+        delete_task_payload(payload_reference)

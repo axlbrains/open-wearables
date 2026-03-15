@@ -13,27 +13,43 @@ module "open_wearables_stack" {
   github_repository_name          = var.github_repository_name
   branch_pattern                  = var.branch_pattern
   scheduler_jobs                  = var.scheduler_jobs
-  create_network                  = var.create_network
-  create_cloud_sql                = var.create_cloud_sql
-  cloud_sql_db_name               = var.cloud_sql_db_name
-  cloud_sql_db_user               = var.cloud_sql_db_user
-  cloud_sql_db_password           = var.cloud_sql_db_password
-  create_memorystore              = var.create_memorystore
-  enable_backend_api_service      = var.enable_backend_api_service
-  enable_worker_service           = var.enable_worker_service
-  enable_backend_init_job         = var.enable_backend_init_job
-  enable_frontend_service         = var.enable_frontend_service
-  enable_cloud_tasks_dispatch     = var.enable_cloud_tasks_dispatch
-  create_default_scheduler_jobs   = var.create_default_scheduler_jobs
-  worker_service_base_url         = var.worker_service_base_url
-  backend_image                   = var.backend_image
-  frontend_image                  = var.frontend_image
-  backend_api_env                 = var.backend_api_env
-  backend_worker_env              = var.backend_worker_env
-  backend_init_env                = var.backend_init_env
-  frontend_env                    = var.frontend_env
-  backend_api_secret_env          = var.backend_api_secret_env
-  backend_worker_secret_env       = var.backend_worker_secret_env
-  backend_init_secret_env         = var.backend_init_secret_env
-  frontend_secret_env             = var.frontend_secret_env
+
+  # Shared Infrastructure Integration
+  create_network        = var.create_network
+  network_name          = var.network_name
+  subnetwork_name       = "axl-srvless-subnet" # Explicitly match AXL if not dynamic
+  vpc_connector_name    = "axl-srvless-connector"
+
+  create_cloud_sql      = false # Assume using existing AXL SQL instance
+  cloud_sql_instance_name = "axl-postgres"
+  cloud_sql_db_name     = var.cloud_sql_db_name
+  cloud_sql_db_user     = var.cloud_sql_db_user
+  cloud_sql_db_password = var.cloud_sql_db_password
+
+  create_memorystore    = false # Assume using existing AXL Redis
+  memorystore_name      = "axl-redis"
+
+  # Service Configuration
+  enable_backend_api_service    = var.enable_backend_api_service
+  enable_worker_service         = var.enable_worker_service
+  enable_backend_init_job       = var.enable_backend_init_job
+  enable_frontend_service       = var.enable_frontend_service
+  enable_cloud_tasks_dispatch   = var.enable_cloud_tasks_dispatch
+  create_default_scheduler_jobs = var.create_default_scheduler_jobs
+
+  axl_api_service_account_email = var.axl_api_service_account_email
+
+  worker_service_base_url       = var.worker_service_base_url
+  backend_image                 = var.backend_image
+  frontend_image                = var.frontend_image
+
+  backend_api_env               = var.backend_api_env
+  backend_worker_env            = var.backend_worker_env
+  backend_init_env              = var.backend_init_env
+  frontend_env                  = var.frontend_env
+
+  backend_api_secret_env        = var.backend_api_secret_env
+  backend_worker_secret_env     = var.backend_worker_secret_env
+  backend_init_secret_env       = var.backend_init_secret_env
+  frontend_secret_env           = var.frontend_secret_env
 }

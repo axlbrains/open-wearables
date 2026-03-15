@@ -1,5 +1,5 @@
 resource "google_cloudbuild_trigger" "backend" {
-  count = var.enable_backend_api_service ? 1 : 0
+  count = var.enable_cloud_build_triggers && var.enable_backend_api_service ? 1 : 0
 
   project     = var.project_id
   name        = "${local.resource_prefix}-backend"
@@ -28,7 +28,7 @@ resource "google_cloudbuild_trigger" "backend" {
 }
 
 resource "google_cloudbuild_trigger" "frontend" {
-  count = var.enable_frontend_service ? 1 : 0
+  count = var.enable_cloud_build_triggers && var.enable_frontend_service ? 1 : 0
 
   project     = var.project_id
   name        = "${local.resource_prefix}-frontend"

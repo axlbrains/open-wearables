@@ -7,7 +7,6 @@ from app.config import settings
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas import SDKSyncRequest, UploadDataResponse
 from app.services.raw_payload_storage import store_raw_payload
-from app.services.task_payload_storage import store_task_payload
 from app.utils.auth import SDKAuthDep
 from app.utils.structured_logging import log_structured
 
@@ -98,35 +97,16 @@ async def sync_sdk_data(
         trace_id=batch_id,
     )
 
-    if len(content_str) > settings.task_payload_inline_max_bytes:
-        # Offload large payload to storage (GCS/FS)
-        payload_ref = store_task_payload(
-            content_str.encode("utf-8"),
-            content_type="application/json",
-            prefix="sdk-sync",
-            filename=f"{batch_id}.json",
-        )
-        dispatch_task(
-            RegisteredTask.PROCESS_SDK_UPLOAD_REFERENCE,
-            kwargs={
-                "payload_reference": payload_ref,
-                "user_id": user_id,
-                "provider": provider,
-                "batch_id": batch_id,
-            },
-        )
-    else:
-        # Send small payload inline
-        dispatch_task(
-            RegisteredTask.PROCESS_SDK_UPLOAD,
-            kwargs={
-                "content": content_str,
-                "content_type": "application/json",
-                "user_id": user_id,
-                "provider": provider,
-                "batch_id": batch_id,
-            },
-        )
+    dispatch_task(
+        RegisteredTask.PROCESS_SDK_UPLOAD,
+        kwargs={
+            "content": content_str,
+            "content_type": "application/json",
+            "user_id": user_id,
+            "provider": provider,
+            "batch_id": batch_id,
+        },
+    )
 
     return UploadDataResponse(status_code=202, response="Import task queued successfully", user_id=user_id)
 

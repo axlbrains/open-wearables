@@ -27,3 +27,8 @@ output "scheduler_job_names" {
   description = "Cloud Scheduler job names."
   value       = { for key, job in google_cloud_scheduler_job.jobs : key => job.name }
 }
+
+output "frontend_domain_mapping_records" {
+  description = "DNS records for the frontend domain mapping."
+  value       = var.enable_frontend_service && var.frontend_custom_domain != null ? google_cloud_run_domain_mapping.frontend[0].status[0].resource_records : []
+}

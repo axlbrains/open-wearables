@@ -7,14 +7,14 @@ from celery import shared_task
 
 @shared_task(queue="sdk_sync")
 def process_sdk_upload_reference(
-    payload_ref: dict[str, Any],
+    payload_reference: dict[str, Any],
     content_type: str,
     user_id: str,
     provider: str,
     batch_id: str | None = None,
 ) -> dict[str, int | str]:
     try:
-        content = load_task_payload(payload_ref).decode("utf-8")
+        content = load_task_payload(payload_reference).decode("utf-8")
         return process_sdk_upload(
             content=content,
             content_type=content_type,
@@ -23,4 +23,4 @@ def process_sdk_upload_reference(
             batch_id=batch_id,
         )
     finally:
-        delete_task_payload(payload_ref)
+        delete_task_payload(payload_reference)

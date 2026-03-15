@@ -15,7 +15,8 @@ from app.integrations.task_dispatcher import (
 )
 
 
-def test_serialize_payload_round_trips_bytes() -> None:
+@pytest.mark.asyncio
+async def test_serialize_payload_round_trips_bytes() -> None:
     payload = {
         "file_contents": b"<xml>payload</xml>",
         "items": [1, {"binary": b"abc"}],

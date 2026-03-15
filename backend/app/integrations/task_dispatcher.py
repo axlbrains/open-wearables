@@ -139,8 +139,7 @@ def dispatch_task(
     backend = TaskDispatchBackend(settings.task_dispatch_backend)
 
     # Automatic offloading for large payloads
-    if backend == TaskDispatchBackend.CLOUD_TASKS:
-        task_key, task_kwargs = _maybe_offload_payload(task_key, task_kwargs)
+    task_key, task_kwargs = _maybe_offload_payload(task_key, task_kwargs)
 
     definition = TASK_DEFINITIONS[task_key]
 

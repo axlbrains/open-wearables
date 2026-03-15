@@ -30,17 +30,17 @@ locals {
   frontend_service_name_resolved       = coalesce(var.frontend_service_name, "${local.resource_prefix}-frontend")
 
   backend_runtime_env = merge(
-    var.create_cloud_sql ? merge(
+    local.cloud_sql_connection_name != null ? merge(
       {
         DB_NAME        = var.cloud_sql_db_name
         DB_USER        = var.cloud_sql_db_user
-        DB_SOCKET_PATH = "/cloudsql/${google_sql_database_instance.main[0].connection_name}"
+        DB_SOCKET_PATH = "/cloudsql/${local.cloud_sql_connection_name}"
       },
       var.cloud_sql_db_password != null ? { DB_PASSWORD = var.cloud_sql_db_password } : {}
     ) : {},
-    var.create_memorystore ? {
-      REDIS_HOST = google_redis_instance.main[0].host
-      REDIS_PORT = tostring(google_redis_instance.main[0].port)
+    local.redis_host != null ? {
+      REDIS_HOST = local.redis_host
+      REDIS_PORT = tostring(local.redis_port)
     } : {},
   )
 
@@ -89,6 +89,7 @@ resource "google_cloud_run_v2_service" "backend_api" {
   name     = local.backend_api_service_name_resolved
   location = var.region
   ingress  = var.backend_api_ingress
+  deletion_protection = false
 
   labels = merge(var.labels, { component = "backend-api" })
 
@@ -103,19 +104,19 @@ resource "google_cloud_run_v2_service" "backend_api" {
     }
 
     dynamic "volumes" {
-      for_each = var.create_cloud_sql ? [1] : []
+      for_each = local.cloud_sql_connection_name != null ? [1] : []
       content {
         name = "cloudsql"
         cloud_sql_instance {
-          instances = [google_sql_database_instance.main[0].connection_name]
+          instances = [local.cloud_sql_connection_name]
         }
       }
     }
 
     dynamic "vpc_access" {
-      for_each = var.create_vpc_connector && var.create_memorystore ? [1] : []
+      for_each = local.vpc_connector_id != null ? [1] : []
       content {
-        connector = google_vpc_access_connector.main[0].id
+        connector = local.vpc_connector_id
         egress    = var.backend_vpc_egress
       }
     }
@@ -155,7 +156,7 @@ resource "google_cloud_run_v2_service" "backend_api" {
       }
 
       dynamic "volume_mounts" {
-        for_each = var.create_cloud_sql ? [1] : []
+        for_each = local.cloud_sql_connection_name != null ? [1] : []
         content {
           name       = "cloudsql"
           mount_path = "/cloudsql"
@@ -185,6 +186,7 @@ resource "google_cloud_run_v2_service" "backend_worker" {
   name     = local.backend_worker_service_name_resolved
   location = var.region
   ingress  = var.backend_worker_ingress
+  deletion_protection = false
 
   labels = merge(var.labels, { component = "backend-worker" })
 
@@ -199,19 +201,19 @@ resource "google_cloud_run_v2_service" "backend_worker" {
     }
 
     dynamic "volumes" {
-      for_each = var.create_cloud_sql ? [1] : []
+      for_each = local.cloud_sql_connection_name != null ? [1] : []
       content {
         name = "cloudsql"
         cloud_sql_instance {
-          instances = [google_sql_database_instance.main[0].connection_name]
+          instances = [local.cloud_sql_connection_name]
         }
       }
     }
 
     dynamic "vpc_access" {
-      for_each = var.create_vpc_connector && var.create_memorystore ? [1] : []
+      for_each = local.vpc_connector_id != null ? [1] : []
       content {
-        connector = google_vpc_access_connector.main[0].id
+        connector = local.vpc_connector_id
         egress    = var.backend_vpc_egress
       }
     }
@@ -251,7 +253,7 @@ resource "google_cloud_run_v2_service" "backend_worker" {
       }
 
       dynamic "volume_mounts" {
-        for_each = var.create_cloud_sql ? [1] : []
+        for_each = local.cloud_sql_connection_name != null ? [1] : []
         content {
           name       = "cloudsql"
           mount_path = "/cloudsql"
@@ -280,6 +282,7 @@ resource "google_cloud_run_v2_job" "backend_init" {
   project  = var.project_id
   name     = local.backend_init_job_name_resolved
   location = var.region
+  deletion_protection = false
   labels   = merge(var.labels, { component = "backend-init" })
 
   template {
@@ -289,19 +292,19 @@ resource "google_cloud_run_v2_job" "backend_init" {
       max_retries     = 1
 
       dynamic "volumes" {
-        for_each = var.create_cloud_sql ? [1] : []
+        for_each = local.cloud_sql_connection_name != null ? [1] : []
         content {
           name = "cloudsql"
           cloud_sql_instance {
-            instances = [google_sql_database_instance.main[0].connection_name]
+            instances = [local.cloud_sql_connection_name]
           }
         }
       }
 
       dynamic "vpc_access" {
-        for_each = var.create_vpc_connector && var.create_memorystore ? [1] : []
+        for_each = local.vpc_connector_id != null ? [1] : []
         content {
-          connector = google_vpc_access_connector.main[0].id
+          connector = local.vpc_connector_id
           egress    = var.backend_vpc_egress
         }
       }
@@ -337,7 +340,7 @@ resource "google_cloud_run_v2_job" "backend_init" {
         }
 
         dynamic "volume_mounts" {
-          for_each = var.create_cloud_sql ? [1] : []
+          for_each = local.cloud_sql_connection_name != null ? [1] : []
           content {
             name       = "cloudsql"
             mount_path = "/cloudsql"
@@ -364,6 +367,7 @@ resource "google_cloud_run_v2_service" "frontend" {
   name     = local.frontend_service_name_resolved
   location = var.region
   ingress  = var.frontend_ingress
+  deletion_protection = false
 
   labels = merge(var.labels, { component = "frontend" })
 
@@ -421,6 +425,16 @@ resource "google_cloud_run_v2_service" "frontend" {
   }
 
   depends_on = [google_project_service.required]
+}
+
+resource "google_cloud_run_v2_service_iam_member" "backend_api_axl_invoker" {
+  count = var.enable_backend_api_service && var.axl_api_service_account_email != null ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.backend_api[0].name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.axl_api_service_account_email}"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "backend_api_public_invoker" {
@@ -490,4 +504,20 @@ resource "google_cloud_scheduler_job" "default_jobs" {
   }
 
   depends_on = [google_cloud_run_v2_service.backend_worker]
+}
+
+resource "google_cloud_run_domain_mapping" "frontend" {
+  count = var.enable_frontend_service && var.frontend_custom_domain != null ? 1 : 0
+
+  project  = var.project_id
+  location = var.region
+  name     = var.frontend_custom_domain
+
+  metadata {
+    namespace = var.project_id
+  }
+
+  spec {
+    route_name = google_cloud_run_v2_service.frontend[0].name
+  }
 }

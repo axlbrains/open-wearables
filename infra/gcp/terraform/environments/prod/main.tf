@@ -25,6 +25,9 @@ module "open_wearables_stack" {
   worker_service_base_url         = var.worker_service_base_url
   backend_image                   = var.backend_image
   frontend_image                  = var.frontend_image
+  backend_api_command             = var.backend_api_command
+  backend_worker_command          = var.backend_worker_command
+  backend_init_command            = var.backend_init_command
   backend_api_env                 = var.backend_api_env
   backend_worker_env              = var.backend_worker_env
   backend_init_env                = var.backend_init_env
@@ -33,4 +36,7 @@ module "open_wearables_stack" {
   backend_worker_secret_env       = var.backend_worker_secret_env
   backend_init_secret_env         = var.backend_init_secret_env
   frontend_secret_env             = var.frontend_secret_env
+  frontend_custom_domain          = var.frontend_custom_domain
+  backend_api_allow_unauthenticated = var.backend_api_allow_unauthenticated
+  frontend_allow_unauthenticated    = var.frontend_allow_unauthenticated
 }
