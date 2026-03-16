@@ -90,6 +90,18 @@ variable "create_cloud_sql" {
   default     = true
 }
 
+variable "create_vpc_connector" {
+  description = "Whether to create a VPC access connector."
+  type        = bool
+  default     = true
+}
+
+variable "vpc_connector_name" {
+  description = "Name of the VPC access connector."
+  type        = string
+  default     = null
+}
+
 variable "cloud_sql_db_name" {
   description = "Database name."
   type        = string
@@ -148,6 +160,26 @@ variable "create_default_scheduler_jobs" {
   description = "Create scheduler jobs."
   type        = bool
   default     = true
+}
+
+variable "queue_configs" {
+  description = "A map of queue keys to their configurations."
+  type = map(object({
+    max_dispatches_per_second = number
+    max_concurrent_dispatches = number
+    max_attempts              = number
+    min_backoff               = string
+    max_backoff               = string
+  }))
+  default = {
+    default = {
+      max_dispatches_per_second = 5
+      max_concurrent_dispatches = 20
+      max_attempts              = 10
+      min_backoff               = "0.1s"
+      max_backoff               = "3600s"
+    }
+  }
 }
 
 variable "worker_service_base_url" {
@@ -242,6 +274,36 @@ variable "frontend_allow_unauthenticated" {
   description = "Whether to allow unauthenticated access to the frontend service."
   type        = bool
   default     = true
+}
+
+variable "api_service_account_email" {
+  description = "The service account email of the backend API."
+  type        = string
+  default     = null
+}
+
+variable "worker_service_account_email" {
+  description = "The service account email of the backend worker."
+  type        = string
+  default     = null
+}
+
+variable "migrator_service_account_email" {
+  description = "The service account email of the backend init job."
+  type        = string
+  default     = null
+}
+
+variable "scheduler_service_account_email" {
+  description = "The service account email of the Cloud Scheduler."
+  type        = string
+  default     = null
+}
+
+variable "frontend_service_account_email" {
+  description = "The service account email of the frontend."
+  type        = string
+  default     = null
 }
 
 variable "axl_api_service_account_email" {

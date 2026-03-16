@@ -113,6 +113,9 @@ variable "service_account_project_roles" {
       "roles/redis.editor",
       "roles/secretmanager.secretAccessor",
       "roles/vpcaccess.user",
+      "roles/cloudtasks.enqueuer",
+      "roles/iam.serviceAccountUser",
+      "roles/iam.serviceAccountTokenCreator",
     ]
     worker = [
       "roles/cloudsql.client",
@@ -120,6 +123,8 @@ variable "service_account_project_roles" {
       "roles/secretmanager.secretAccessor",
       "roles/vpcaccess.user",
       "roles/cloudtasks.enqueuer",
+      "roles/iam.serviceAccountUser",
+      "roles/iam.serviceAccountTokenCreator",
     ]
     migrator = [
       "roles/cloudsql.client",

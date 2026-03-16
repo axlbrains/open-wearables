@@ -64,9 +64,8 @@ resource "google_vpc_access_connector" "main" {
   min_instances = var.vpc_connector_min_instances
   max_instances = var.vpc_connector_max_instances
 
-  subnet {
-    name = google_compute_subnetwork.main[0].name
-  }
+  network       = google_compute_network.main[0].id
+  ip_cidr_range = "10.11.0.0/28"
 
   depends_on = [google_project_service.required]
 }

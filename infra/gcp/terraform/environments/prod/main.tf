@@ -12,6 +12,8 @@ module "open_wearables_stack" {
   scheduler_jobs                  = var.scheduler_jobs
   create_network                  = var.create_network
   create_cloud_sql                = var.create_cloud_sql
+  create_vpc_connector            = var.create_vpc_connector
+  vpc_connector_name              = var.vpc_connector_name
   cloud_sql_db_name               = var.cloud_sql_db_name
   cloud_sql_db_user               = var.cloud_sql_db_user
   cloud_sql_db_password           = var.cloud_sql_db_password
@@ -22,6 +24,7 @@ module "open_wearables_stack" {
   enable_frontend_service         = var.enable_frontend_service
   enable_cloud_tasks_dispatch     = var.enable_cloud_tasks_dispatch
   create_default_scheduler_jobs   = var.create_default_scheduler_jobs
+  queue_configs                   = var.queue_configs
   worker_service_base_url         = var.worker_service_base_url
   backend_image                   = var.backend_image
   frontend_image                  = var.frontend_image
@@ -39,4 +42,9 @@ module "open_wearables_stack" {
   frontend_custom_domain          = var.frontend_custom_domain
   backend_api_allow_unauthenticated = var.backend_api_allow_unauthenticated
   frontend_allow_unauthenticated    = var.frontend_allow_unauthenticated
+  api_service_account_email         = var.api_service_account_email
+  worker_service_account_email      = var.worker_service_account_email
+  migrator_service_account_email    = var.migrator_service_account_email
+  scheduler_service_account_email   = var.scheduler_service_account_email
+  frontend_service_account_email    = var.frontend_service_account_email
 }
