@@ -67,6 +67,15 @@ resource "google_secret_manager_secret" "secrets" {
   depends_on = [google_project_service.required]
 }
 
+resource "google_secret_manager_secret_version" "versions" {
+  for_each = var.create_secrets ? var.secret_values : {}
+
+  secret      = google_secret_manager_secret.secrets[each.key].id
+  secret_data = each.value
+
+  depends_on = [google_secret_manager_secret.secrets]
+}
+
 resource "google_cloud_scheduler_job" "jobs" {
   for_each = var.scheduler_jobs
 

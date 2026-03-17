@@ -186,6 +186,13 @@ variable "secret_names" {
   ]
 }
 
+variable "secret_values" {
+  description = "Map of secret names to their initial values. Warning: these will be stored in state."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
+
 variable "enable_cloud_build_triggers" {
   description = "Whether to create Cloud Build triggers."
   type        = bool

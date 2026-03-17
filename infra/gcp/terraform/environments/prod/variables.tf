@@ -38,6 +38,13 @@ variable "secret_names" {
   default     = []
 }
 
+variable "secret_values" {
+  description = "Initial values for Secret Manager secrets."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
+
 variable "github_owner" {
   description = "GitHub repository owner."
   type        = string

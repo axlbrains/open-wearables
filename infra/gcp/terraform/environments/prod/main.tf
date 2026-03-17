@@ -9,6 +9,7 @@ module "open_wearables_stack" {
   artifact_registry_repository_id = var.artifact_registry_repository_id
   create_secrets                  = var.create_secrets
   secret_names                    = var.secret_names
+  secret_values                   = var.secret_values
   scheduler_jobs                  = var.scheduler_jobs
   create_network                  = var.create_network
   create_cloud_sql                = var.create_cloud_sql
