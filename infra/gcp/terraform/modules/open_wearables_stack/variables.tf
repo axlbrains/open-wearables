@@ -180,7 +180,10 @@ variable "create_secrets" {
 variable "secret_names" {
   description = "Secret Manager secret IDs to create without versions."
   type        = list(string)
-  default     = []
+  default     = [
+    "polar_client_id",
+    "polar_client_secret"
+  ]
 }
 
 variable "enable_cloud_build_triggers" {

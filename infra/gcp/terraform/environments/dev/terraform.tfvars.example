@@ -16,6 +16,8 @@ secret_names = [
   "open-wearables-dev-secret-key",
   "open-wearables-dev-db-password",
   "open-wearables-dev-resend-api-key",
+  "open-wearables-dev-polar-client-id",
+  "open-wearables-dev-polar-client-secret",
 ]
 
 create_network     = true
@@ -44,8 +46,10 @@ backend_api_env = {
 }
 
 backend_api_secret_env = {
-  SECRET_KEY  = { secret = "open-wearables-dev-secret-key" }
-  DB_PASSWORD = { secret = "open-wearables-dev-db-password" }
+  SECRET_KEY          = { secret = "open-wearables-dev-secret-key" }
+  DB_PASSWORD         = { secret = "open-wearables-dev-db-password" }
+  POLAR_CLIENT_ID     = { secret = "open-wearables-dev-polar-client-id" }
+  POLAR_CLIENT_SECRET = { secret = "open-wearables-dev-polar-client-secret" }
 }
 
 backend_worker_env = {
@@ -53,8 +57,10 @@ backend_worker_env = {
 }
 
 backend_worker_secret_env = {
-  SECRET_KEY  = { secret = "open-wearables-dev-secret-key" }
-  DB_PASSWORD = { secret = "open-wearables-dev-db-password" }
+  SECRET_KEY          = { secret = "open-wearables-dev-secret-key" }
+  DB_PASSWORD         = { secret = "open-wearables-dev-db-password" }
+  POLAR_CLIENT_ID     = { secret = "open-wearables-dev-polar-client-id" }
+  POLAR_CLIENT_SECRET = { secret = "open-wearables-dev-polar-client-secret" }
 }
 
 backend_init_env = {
@@ -62,8 +68,10 @@ backend_init_env = {
 }
 
 backend_init_secret_env = {
-  SECRET_KEY  = { secret = "open-wearables-dev-secret-key" }
-  DB_PASSWORD = { secret = "open-wearables-dev-db-password" }
+  SECRET_KEY          = { secret = "open-wearables-dev-secret-key" }
+  DB_PASSWORD         = { secret = "open-wearables-dev-db-password" }
+  POLAR_CLIENT_ID     = { secret = "open-wearables-dev-polar-client-id" }
+  POLAR_CLIENT_SECRET = { secret = "open-wearables-dev-polar-client-secret" }
 }
 
 frontend_env = {

@@ -16,6 +16,8 @@ secret_names = [
   "open-wearables-prod-secret-key",
   "open-wearables-prod-db-password",
   "open-wearables-prod-resend-api-key",
+  "open-wearables-prod-polar-client-id",
+  "open-wearables-prod-polar-client-secret",
 ]
 
 create_network     = true
@@ -40,18 +42,33 @@ worker_service_base_url = "https://worker.example.run.app"
 
 backend_api_env = {
   ENVIRONMENT  = "production"
-  SECRET_KEY   = "replace-me"
   CORS_ORIGINS = "https://frontend.example.com"
+}
+
+backend_api_secret_env = {
+  SECRET_KEY          = { secret = "open-wearables-prod-secret-key" }
+  POLAR_CLIENT_ID     = { secret = "open-wearables-prod-polar-client-id" }
+  POLAR_CLIENT_SECRET = { secret = "open-wearables-prod-polar-client-secret" }
 }
 
 backend_worker_env = {
   ENVIRONMENT = "production"
-  SECRET_KEY  = "replace-me"
+}
+
+backend_worker_secret_env = {
+  SECRET_KEY          = { secret = "open-wearables-prod-secret-key" }
+  POLAR_CLIENT_ID     = { secret = "open-wearables-prod-polar-client-id" }
+  POLAR_CLIENT_SECRET = { secret = "open-wearables-prod-polar-client-secret" }
 }
 
 backend_init_env = {
   ENVIRONMENT = "production"
-  SECRET_KEY  = "replace-me"
+}
+
+backend_init_secret_env = {
+  SECRET_KEY          = { secret = "open-wearables-prod-secret-key" }
+  POLAR_CLIENT_ID     = { secret = "open-wearables-prod-polar-client-id" }
+  POLAR_CLIENT_SECRET = { secret = "open-wearables-prod-polar-client-secret" }
 }
 
 frontend_env = {
