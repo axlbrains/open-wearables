@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 @router.post("/users/{user_id}/import/apple/xml/s3")
-async def import_xml_presigned_url(
+def import_xml_presigned_url(
     user_id: str,
     request: PresignedURLRequest,
     _api_key: ApiKeyDep,
@@ -29,13 +29,13 @@ async def import_xml_presigned_url(
 
 
 @router.post("/users/{user_id}/import/apple/xml/direct")
-async def import_xml_file(
+def import_xml_file(
     user_id: str,
     file: UploadFile,
     _api_key: ApiKeyDep,
 ) -> dict[str, str]:
     """Import XML file into the database."""
-    file_contents = await file.read()
+    file_contents = file.file.read()
     filename = file.filename or "upload.xml"
 
     task = dispatch_task(
