@@ -10,15 +10,47 @@ labels = {
 artifact_registry_repository_id = "open-wearables-prod"
 
 create_secrets = true
-secret_names   = ["cloud_sql_db_password", "SECRET_KEY", "polar_client_id", "polar_client_secret", "oura_client_id", "oura_client_secret", "oura_webhook_verification_token"]
+secret_names = [
+  "cloud_sql_db_password",
+  "SECRET_KEY",
+  # Add secrets for each provider you plan to use
+  "polar_client_id",
+  "polar_client_secret",
+  "oura_client_id",
+  "oura_client_secret",
+  "oura_webhook_verification_token",
+  "fitbit_client_id",
+  "fitbit_client_secret",
+  "garmin_client_id",
+  "garmin_client_secret",
+  "suunto_client_id",
+  "suunto_client_secret",
+  "suunto_subscription_key",
+  "whoop_client_id",
+  "whoop_client_secret",
+  "strava_client_id",
+  "strava_client_secret",
+]
 secret_values = {
-  polar_client_id       = "replace-me"
-  polar_client_secret   = "replace-me"
-  oura_client_id        = "replace-me"
-  oura_client_secret    = "replace-me"
-  oura_webhook_verification_token = "replace-me"
-  SECRET_KEY            = "replace-me"
+  SECRET_KEY            = "replace-me"  # python3 -c "import secrets; print(secrets.token_urlsafe(64))"
   cloud_sql_db_password = "replace-me"
+  # Provider credentials (only add the ones you need)
+  polar_client_id                 = "replace-me"
+  polar_client_secret             = "replace-me"
+  oura_client_id                  = "replace-me"
+  oura_client_secret              = "replace-me"
+  oura_webhook_verification_token = "replace-me"
+  fitbit_client_id                = "replace-me"
+  fitbit_client_secret            = "replace-me"
+  garmin_client_id                = "replace-me"
+  garmin_client_secret            = "replace-me"
+  suunto_client_id                = "replace-me"
+  suunto_client_secret            = "replace-me"
+  suunto_subscription_key         = "replace-me"
+  whoop_client_id                 = "replace-me"
+  whoop_client_secret             = "replace-me"
+  strava_client_id                = "replace-me"
+  strava_client_secret            = "replace-me"
 }
 
 create_network   = true
@@ -80,17 +112,35 @@ backend_api_env = {
   ENVIRONMENT                = "production"
   CORS_ORIGINS               = "[\"https://your-domain.com\"]"
   AUTH_ALLOWED_REDIRECT_URLS = "yourapp://wearables/callback,https://your-domain.com"
+  # Provider redirect URIs (add for each provider you use)
   POLAR_REDIRECT_URI         = "https://api.your-domain.com/api/v1/oauth/polar/callback"
   OURA_REDIRECT_URI          = "https://api.your-domain.com/api/v1/oauth/oura/callback"
+  FITBIT_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/fitbit/callback"
+  GARMIN_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/garmin/callback"
+  SUUNTO_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/suunto/callback"
+  WHOOP_REDIRECT_URI         = "https://api.your-domain.com/api/v1/oauth/whoop/callback"
+  STRAVA_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/strava/callback"
 }
 
 backend_api_secret_env = {
   SECRET_KEY                      = { secret = "SECRET_KEY" }
+  # Provider credentials (add for each provider you use)
   POLAR_CLIENT_ID                 = { secret = "polar_client_id" }
-  POLAR_CLIENT_SECRET              = { secret = "polar_client_secret" }
+  POLAR_CLIENT_SECRET             = { secret = "polar_client_secret" }
   OURA_CLIENT_ID                  = { secret = "oura_client_id" }
-  OURA_CLIENT_SECRET               = { secret = "oura_client_secret" }
+  OURA_CLIENT_SECRET              = { secret = "oura_client_secret" }
   OURA_WEBHOOK_VERIFICATION_TOKEN = { secret = "oura_webhook_verification_token" }
+  FITBIT_CLIENT_ID                = { secret = "fitbit_client_id" }
+  FITBIT_CLIENT_SECRET            = { secret = "fitbit_client_secret" }
+  GARMIN_CLIENT_ID                = { secret = "garmin_client_id" }
+  GARMIN_CLIENT_SECRET            = { secret = "garmin_client_secret" }
+  SUUNTO_CLIENT_ID                = { secret = "suunto_client_id" }
+  SUUNTO_CLIENT_SECRET            = { secret = "suunto_client_secret" }
+  SUUNTO_SUBSCRIPTION_KEY         = { secret = "suunto_subscription_key" }
+  WHOOP_CLIENT_ID                 = { secret = "whoop_client_id" }
+  WHOOP_CLIENT_SECRET             = { secret = "whoop_client_secret" }
+  STRAVA_CLIENT_ID                = { secret = "strava_client_id" }
+  STRAVA_CLIENT_SECRET            = { secret = "strava_client_secret" }
 }
 
 backend_worker_env = {
@@ -98,15 +148,31 @@ backend_worker_env = {
   AUTH_ALLOWED_REDIRECT_URLS = "yourapp://wearables/callback,https://your-domain.com"
   POLAR_REDIRECT_URI         = "https://api.your-domain.com/api/v1/oauth/polar/callback"
   OURA_REDIRECT_URI          = "https://api.your-domain.com/api/v1/oauth/oura/callback"
+  FITBIT_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/fitbit/callback"
+  GARMIN_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/garmin/callback"
+  SUUNTO_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/suunto/callback"
+  WHOOP_REDIRECT_URI         = "https://api.your-domain.com/api/v1/oauth/whoop/callback"
+  STRAVA_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/strava/callback"
 }
 
 backend_worker_secret_env = {
   SECRET_KEY                      = { secret = "SECRET_KEY" }
   POLAR_CLIENT_ID                 = { secret = "polar_client_id" }
-  POLAR_CLIENT_SECRET              = { secret = "polar_client_secret" }
+  POLAR_CLIENT_SECRET             = { secret = "polar_client_secret" }
   OURA_CLIENT_ID                  = { secret = "oura_client_id" }
-  OURA_CLIENT_SECRET               = { secret = "oura_client_secret" }
+  OURA_CLIENT_SECRET              = { secret = "oura_client_secret" }
   OURA_WEBHOOK_VERIFICATION_TOKEN = { secret = "oura_webhook_verification_token" }
+  FITBIT_CLIENT_ID                = { secret = "fitbit_client_id" }
+  FITBIT_CLIENT_SECRET            = { secret = "fitbit_client_secret" }
+  GARMIN_CLIENT_ID                = { secret = "garmin_client_id" }
+  GARMIN_CLIENT_SECRET            = { secret = "garmin_client_secret" }
+  SUUNTO_CLIENT_ID                = { secret = "suunto_client_id" }
+  SUUNTO_CLIENT_SECRET            = { secret = "suunto_client_secret" }
+  SUUNTO_SUBSCRIPTION_KEY         = { secret = "suunto_subscription_key" }
+  WHOOP_CLIENT_ID                 = { secret = "whoop_client_id" }
+  WHOOP_CLIENT_SECRET             = { secret = "whoop_client_secret" }
+  STRAVA_CLIENT_ID                = { secret = "strava_client_id" }
+  STRAVA_CLIENT_SECRET            = { secret = "strava_client_secret" }
 }
 
 backend_init_env = {
@@ -114,15 +180,31 @@ backend_init_env = {
   AUTH_ALLOWED_REDIRECT_URLS = "yourapp://wearables/callback,https://your-domain.com"
   POLAR_REDIRECT_URI         = "https://api.your-domain.com/api/v1/oauth/polar/callback"
   OURA_REDIRECT_URI          = "https://api.your-domain.com/api/v1/oauth/oura/callback"
+  FITBIT_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/fitbit/callback"
+  GARMIN_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/garmin/callback"
+  SUUNTO_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/suunto/callback"
+  WHOOP_REDIRECT_URI         = "https://api.your-domain.com/api/v1/oauth/whoop/callback"
+  STRAVA_REDIRECT_URI        = "https://api.your-domain.com/api/v1/oauth/strava/callback"
 }
 
 backend_init_secret_env = {
   SECRET_KEY                      = { secret = "SECRET_KEY" }
   POLAR_CLIENT_ID                 = { secret = "polar_client_id" }
-  POLAR_CLIENT_SECRET              = { secret = "polar_client_secret" }
+  POLAR_CLIENT_SECRET             = { secret = "polar_client_secret" }
   OURA_CLIENT_ID                  = { secret = "oura_client_id" }
-  OURA_CLIENT_SECRET               = { secret = "oura_client_secret" }
+  OURA_CLIENT_SECRET              = { secret = "oura_client_secret" }
   OURA_WEBHOOK_VERIFICATION_TOKEN = { secret = "oura_webhook_verification_token" }
+  FITBIT_CLIENT_ID                = { secret = "fitbit_client_id" }
+  FITBIT_CLIENT_SECRET            = { secret = "fitbit_client_secret" }
+  GARMIN_CLIENT_ID                = { secret = "garmin_client_id" }
+  GARMIN_CLIENT_SECRET            = { secret = "garmin_client_secret" }
+  SUUNTO_CLIENT_ID                = { secret = "suunto_client_id" }
+  SUUNTO_CLIENT_SECRET            = { secret = "suunto_client_secret" }
+  SUUNTO_SUBSCRIPTION_KEY         = { secret = "suunto_subscription_key" }
+  WHOOP_CLIENT_ID                 = { secret = "whoop_client_id" }
+  WHOOP_CLIENT_SECRET             = { secret = "whoop_client_secret" }
+  STRAVA_CLIENT_ID                = { secret = "strava_client_id" }
+  STRAVA_CLIENT_SECRET            = { secret = "strava_client_secret" }
 }
 
 frontend_env = {
