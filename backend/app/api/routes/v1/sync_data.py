@@ -12,9 +12,8 @@ from app.integrations.celery.tasks import (
     get_garmin_backfill_status,
     reset_garmin_type_status,
     set_garmin_cancel_flag,
-    sync_vendor_data,
-    trigger_garmin_backfill_for_type,
 )
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.enums import ProviderName
 from app.services import ApiKeyDep
 from app.services.providers.factory import ProviderFactory
@@ -112,17 +111,20 @@ def sync_user_data(
 
         end_date_iso = summary_end_time  # May be None
 
-        task = sync_vendor_data.delay(
-            user_id=str(user_id),
-            start_date=start_date_iso,
-            end_date=end_date_iso,
-            providers=[provider.value],
+        handle = dispatch_task(
+            RegisteredTask.SYNC_VENDOR_DATA,
+            kwargs={
+                "user_id": str(user_id),
+                "start_date": start_date_iso,
+                "end_date": end_date_iso,
+                "providers": [provider.value],
+            },
         )
 
         response: dict[str, Any] = {
             "success": True,
             "async": True,
-            "task_id": task.id,
+            "task_id": handle.id,
             "message": f"Sync task queued for {provider.value}. Check task status for results.",
         }
 
@@ -297,7 +299,10 @@ def retry_garmin_backfill_type(
 
     # Reset the type status to pending and trigger backfill
     reset_garmin_type_status(str(user_id), type_name)
-    trigger_garmin_backfill_for_type.delay(str(user_id), type_name)
+    dispatch_task(
+        RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+        args=[str(user_id), type_name],
+    )
 
     return {
         "success": True,
