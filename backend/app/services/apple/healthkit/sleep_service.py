@@ -11,14 +11,19 @@ from app.constants.series_types.apple import (
 from app.constants.sleep import SleepStageType
 from app.database import DbSession
 from app.integrations.redis_client import get_redis_client
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
-from app.schemas import (
+from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
-    SDKSyncRequest,
+    SleepStage,
 )
-from app.schemas.apple.healthkit.sleep_state import SLEEP_START_STATES, SleepState, SleepStateStage
-from app.schemas.sleep import SleepStage
+from app.schemas.providers.mobile_sdk import (
+    SLEEP_START_STATES,
+    SleepState,
+    SleepStateStage,
+)
+from app.schemas.providers.mobile_sdk import (
+    SyncRequest as SDKSyncRequest,
+)
 from app.services.apple.healthkit.device_resolution import extract_device_info
 from app.services.event_record_service import event_record_service
 from app.utils.structured_logging import log_structured
@@ -269,9 +274,12 @@ def handle_sleep_data(
             finish_sleep(db_session, user_id, current_state)
             current_state = None
 
+    # import not at module level in order to avoid circular import
+    from app.integrations.celery.tasks.finalize_stale_sleep_task import finalize_stale_sleeps
+
     # Dispatch async task for any other active users or if this session
     # was too fresh to finalize synchronously above.
-    dispatch_task(RegisteredTask.FINALIZE_STALE_SLEEPS)
+    finalize_stale_sleeps.delay()
 
 
 def _calculate_final_metrics(stages: list[SleepStateStage]) -> tuple[dict, list[SleepStage]]:

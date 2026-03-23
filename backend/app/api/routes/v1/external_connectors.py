@@ -2,8 +2,8 @@ import json
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
-from app.schemas import UploadDataResponse
+from app.integrations.celery.tasks.process_sdk_upload_task import process_sdk_upload
+from app.schemas.responses.upload import UploadDataResponse
 from app.utils.auth import SDKAuthDep
 
 router = APIRouter()
@@ -15,7 +15,7 @@ def sync_data_auto_health_export(
     body: dict,
     auth: SDKAuthDep,
 ) -> UploadDataResponse:
-    """Import health data from JSON body asynchronously via the configured task backend.
+    """Import health data from JSON body asynchronously via Celery.
 
     Accepts either SDK user token (Bearer) or API key (X-Open-Wearables-API-Key header).
     """
@@ -27,14 +27,12 @@ def sync_data_auto_health_export(
 
     content_str = json.dumps(body)
 
-    dispatch_task(
-        RegisteredTask.PROCESS_SDK_UPLOAD,
-        kwargs={
-            "content": content_str,
-            "content_type": "application/json",
-            "user_id": user_id,
-            "provider": "auto-health-export",
-        },
+    # Queue the import task in Celery with auto-health-export source
+    process_sdk_upload.delay(
+        content=content_str,
+        content_type="application/json",
+        user_id=user_id,
+        provider="auto-health-export",
     )
 
     return UploadDataResponse(status_code=202, response="Import task queued successfully", user_id=user_id)

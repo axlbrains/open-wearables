@@ -17,8 +17,11 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.constants.sleep import SleepStageType
-from app.schemas.apple.healthkit.sleep_state import SleepState, SleepStateStage
-from app.schemas.apple.healthkit.sync_request import SyncRequest
+from app.schemas.providers.mobile_sdk import (
+    SleepState,
+    SleepStateStage,
+    SyncRequest,
+)
 from app.services.apple.healthkit.sleep_service import (
     _calculate_final_metrics,
     finish_sleep,
@@ -639,7 +642,7 @@ class TestSDKSyncEndpointSleep:
                 json=OLD_WATCH_PAYLOAD,
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 202
         data = response.json()
         assert data["status_code"] == 202
         mock_task.delay.assert_called_once()
@@ -664,6 +667,6 @@ class TestSDKSyncEndpointSleep:
                 json=DETAILED_STAGES_PAYLOAD,
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 202
         data = response.json()
         assert data["status_code"] == 202

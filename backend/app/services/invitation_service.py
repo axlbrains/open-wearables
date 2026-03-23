@@ -11,7 +11,7 @@ from app.database import DbSession
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.models import Developer, Invitation
 from app.repositories.invitation_repository import InvitationRepository
-from app.schemas.invitation import (
+from app.schemas.model_crud.user_management import (
     InvitationCreate,
     InvitationCreateInternal,
     InvitationResend,

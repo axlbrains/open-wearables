@@ -3,9 +3,9 @@ from logging import getLogger
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.config import settings
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
-from app.schemas import SDKSyncRequest, UploadDataResponse
+from app.integrations.celery.tasks.process_sdk_upload_task import process_sdk_upload
+from app.schemas.providers.mobile_sdk import SyncRequest
+from app.schemas.responses.upload import UploadDataResponse
 from app.services.raw_payload_storage import store_raw_payload
 from app.utils.auth import SDKAuthDep
 from app.utils.structured_logging import log_structured
@@ -14,10 +14,10 @@ router = APIRouter()
 logger = getLogger(__name__)
 
 
-@router.post("/sdk/users/{user_id}/sync")
+@router.post("/sdk/users/{user_id}/sync", status_code=status.HTTP_202_ACCEPTED)
 def sync_sdk_data(
     user_id: str,
-    body: SDKSyncRequest,
+    body: SyncRequest,
     auth: SDKAuthDep,
 ) -> UploadDataResponse:
     """Import health data from SDK provider asynchronously via Celery.
@@ -97,16 +97,12 @@ def sync_sdk_data(
         trace_id=batch_id,
     )
 
-    dispatch_task(
-        RegisteredTask.PROCESS_SDK_UPLOAD,
-        kwargs={
-            "content": content_str,
-            "content_type": "application/json",
-            "user_id": user_id,
-            "provider": provider,
-            "batch_id": batch_id,
-        },
+    process_sdk_upload.delay(
+        content=content_str,
+        content_type="application/json",
+        user_id=user_id,
+        provider=provider,
+        batch_id=batch_id,
     )
 
     return UploadDataResponse(status_code=202, response="Import task queued successfully", user_id=user_id)
-

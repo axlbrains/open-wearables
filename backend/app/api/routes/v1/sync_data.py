@@ -12,9 +12,10 @@ from app.integrations.celery.tasks import (
     get_garmin_backfill_status,
     reset_garmin_type_status,
     set_garmin_cancel_flag,
+    sync_vendor_data,
+    trigger_garmin_backfill_for_type,
 )
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
-from app.schemas.oauth import ProviderName
+from app.schemas.enums import ProviderName
 from app.services import ApiKeyDep
 from app.services.providers.factory import ProviderFactory
 from app.services.providers.templates.base_247_data import Base247DataTemplate
@@ -95,12 +96,12 @@ def sync_user_data(
     - **Whoop**: Supports workouts and 247 data (sleep/recovery)
 
     **Execution Mode:**
-    - `async=true` (default): Dispatches sync to the configured background worker. Returns immediately with task ID.
+    - `async=true` (default): Dispatches sync to background Celery worker. Returns immediately with task ID.
     - `async=false`: Executes synchronously (may timeout for large data sets).
 
     Requires valid API key and active connection for the user.
     """
-    # Async mode: dispatch to the configured task backend and return immediately
+    # Async mode: dispatch to Celery and return immediately
     if run_async:
         # Convert since timestamp to ISO date if provided
         start_date_iso = None
@@ -111,14 +112,11 @@ def sync_user_data(
 
         end_date_iso = summary_end_time  # May be None
 
-        task = dispatch_task(
-            RegisteredTask.SYNC_VENDOR_DATA,
-            kwargs={
-                "user_id": str(user_id),
-                "start_date": start_date_iso,
-                "end_date": end_date_iso,
-                "providers": [provider.value],
-            },
+        task = sync_vendor_data.delay(
+            user_id=str(user_id),
+            start_date=start_date_iso,
+            end_date=end_date_iso,
+            providers=[provider.value],
         )
 
         response: dict[str, Any] = {
@@ -299,10 +297,7 @@ def retry_garmin_backfill_type(
 
     # Reset the type status to pending and trigger backfill
     reset_garmin_type_status(str(user_id), type_name)
-    dispatch_task(
-        RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
-        args=[str(user_id), type_name],
-    )
+    trigger_garmin_backfill_for_type.delay(str(user_id), type_name)
 
     return {
         "success": True,

@@ -47,7 +47,7 @@ def engine() -> Any:
     from sqlalchemy.orm import Session as SessionClass
 
     from app.models import SeriesTypeDefinition
-    from app.schemas.series_types import SERIES_TYPE_DEFINITIONS
+    from app.schemas.enums import SERIES_TYPE_DEFINITIONS
 
     with SessionClass(bind=test_engine) as session:
         for type_id, enum, unit in SERIES_TYPE_DEFINITIONS:
@@ -163,15 +163,12 @@ def mock_redis(monkeypatch: pytest.MonkeyPatch) -> Generator[MagicMock, None, No
 @pytest.fixture(autouse=True)
 def mock_celery_tasks(monkeypatch: pytest.MonkeyPatch) -> Generator[MagicMock, None, None]:
     """Mock Celery tasks to run synchronously."""
-    # Mock the poll_sqs_task specifically
     mock_task = MagicMock()
     mock_task.delay.return_value = MagicMock()
     mock_task.apply_async.return_value = MagicMock()
 
     with (
         patch("celery.current_app") as mock_celery,
-        patch("app.integrations.celery.tasks.poll_sqs_task.poll_sqs_task", mock_task),
-        patch("app.api.routes.v1.import_xml.poll_sqs_task", mock_task),
         # Patch Garmin backfill task dispatched from webhook route
         patch("app.api.routes.v1.garmin_webhooks.trigger_next_pending_type", mock_task),
     ):

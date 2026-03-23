@@ -5,11 +5,11 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 
 from app.database import DbSession
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
-from app.schemas import (
-    AuthorizationURLResponse,
+from app.integrations.celery.tasks import start_garmin_full_backfill, sync_vendor_data
+from app.schemas.enums import ProviderName
+from app.schemas.model_crud.credentials import AuthorizationURLResponse
+from app.schemas.model_crud.data_priority import (
     BulkProviderSettingsUpdate,
-    ProviderName,
     ProviderSettingRead,
     ProviderSettingUpdate,
 )
@@ -85,22 +85,16 @@ def oauth_callback(
     oauth_state = strategy.oauth.handle_callback(db, code, state)
 
     # schedule sync task
-    dispatch_task(
-        RegisteredTask.SYNC_VENDOR_DATA,
-        kwargs={
-            "user_id": str(oauth_state.user_id),
-            "start_date": None,
-            "end_date": None,
-            "providers": [provider.value],
-        },
+    sync_vendor_data.delay(
+        user_id=str(oauth_state.user_id),
+        start_date=None,
+        end_date=None,
+        providers=[provider.value],
     )
 
     # For Garmin: Auto-trigger 30-day backfill for all backfill data types
     if provider == ProviderName.GARMIN:
-        dispatch_task(
-            RegisteredTask.START_GARMIN_FULL_BACKFILL,
-            args=[str(oauth_state.user_id)],
-        )
+        start_garmin_full_backfill.delay(str(oauth_state.user_id))
 
     # If a specific redirect_uri was requested (e.g. by frontend), redirect there
     if oauth_state.redirect_uri:
