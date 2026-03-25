@@ -215,7 +215,7 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         if scope and connection.scope != scope:
             connection.scope = scope
 
-        connection.status = "active"
+        connection.status = ConnectionStatus.ACTIVE
         connection.updated_at = datetime.now(timezone.utc)
         db_session.add(connection)
         db_session.commit()
