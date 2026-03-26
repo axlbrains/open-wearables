@@ -324,3 +324,15 @@ variable "service_account_project_roles" {
   type        = map(list(string))
   default     = null
 }
+
+variable "backend_api_min_instances" {
+  description = "Minimum instance count for the backend API service."
+  type        = number
+  default     = 0
+}
+
+variable "backend_vpc_egress" {
+  description = "VPC egress setting for backend services."
+  type        = string
+  default     = "ALL_TRAFFIC"
+}

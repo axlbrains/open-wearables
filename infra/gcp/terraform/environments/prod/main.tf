@@ -48,4 +48,6 @@ module "open_wearables_stack" {
   migrator_service_account_email    = var.migrator_service_account_email
   scheduler_service_account_email   = var.scheduler_service_account_email
   frontend_service_account_email    = var.frontend_service_account_email
+  backend_api_min_instances         = var.backend_api_min_instances
+  backend_vpc_egress                = var.backend_vpc_egress
 }

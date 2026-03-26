@@ -68,10 +68,10 @@ resource "google_secret_manager_secret" "secrets" {
 }
 
 resource "google_secret_manager_secret_version" "versions" {
-  for_each = var.create_secrets ? var.secret_values : {}
+  for_each = var.create_secrets ? toset(var.secret_names) : toset([])
 
   secret      = google_secret_manager_secret.secrets[each.key].id
-  secret_data = each.value
+  secret_data = var.secret_values[each.key]
 
   depends_on = [google_secret_manager_secret.secrets]
 }
