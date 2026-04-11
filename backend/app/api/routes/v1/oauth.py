@@ -5,7 +5,6 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 
 from app.database import DbSession
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.credentials import AuthorizationURLResponse
 from app.schemas.model_crud.data_priority import (
@@ -13,7 +12,7 @@ from app.schemas.model_crud.data_priority import (
     ProviderSettingRead,
     ProviderSettingUpdate,
 )
-from app.services import DeveloperDep
+from app.services import DeveloperDep, user_connection_service
 from app.services.provider_settings_service import ProviderSettingsService
 from app.services.providers.base_strategy import BaseProviderStrategy
 from app.services.providers.factory import ProviderFactory
@@ -35,7 +34,7 @@ def get_oauth_strategy(provider: ProviderName) -> BaseProviderStrategy:
     return strategy
 
 
-@router.get("/{provider}/authorize", response_model=AuthorizationURLResponse)
+@router.get("/{provider}/authorize", response_model=AuthorizationURLResponse, tags=["External: Providers"])
 def authorize_provider(
     provider: ProviderName,
     user_id: Annotated[UUID, Query(description="User ID to connect")],
@@ -53,7 +52,7 @@ def authorize_provider(
     return AuthorizationURLResponse(authorization_url=auth_url, state=state)
 
 
-@router.get("/{provider}/callback")
+@router.get("/{provider}/callback", tags=["System: OAuth"])
 def oauth_callback(
     provider: ProviderName,
     db: DbSession,
@@ -84,20 +83,10 @@ def oauth_callback(
     assert strategy.oauth
     oauth_state = strategy.oauth.handle_callback(db, code, state)
 
-    # schedule sync task
-    dispatch_task(
-        RegisteredTask.SYNC_VENDOR_DATA,
-        kwargs={
-            "user_id": str(oauth_state.user_id),
-            "start_date": None,
-            "end_date": None,
-            "providers": [provider.value],
-        },
-    )
-
-    # For Garmin: Auto-trigger 30-day backfill for all backfill data types
-    if provider == ProviderName.GARMIN:
-        dispatch_task(RegisteredTask.START_GARMIN_FULL_BACKFILL, args=[str(oauth_state.user_id)])
+    # Stamp last_synced_at=now so the first periodic sync uses it as the
+    # live-sync cursor and won't pull all historical data.
+    # Historical data must be fetched explicitly via the /sync/historical endpoint.
+    user_connection_service.stamp_last_synced_at(db, oauth_state.user_id, provider.value)
 
     # If a specific redirect_uri was requested (e.g. by frontend), redirect there
     if oauth_state.redirect_uri:
@@ -110,7 +99,7 @@ def oauth_callback(
     )
 
 
-@router.get("/success")
+@router.get("/success", tags=["System: OAuth"])
 def oauth_success(
     provider: Annotated[str, Query()],
     user_id: Annotated[str, Query()],
@@ -124,7 +113,7 @@ def oauth_success(
     }
 
 
-@router.get("/error")
+@router.get("/error", tags=["System: OAuth"])
 def oauth_error(
     message: Annotated[str, Query()] = "OAuth authentication failed",
 ) -> dict:
@@ -135,7 +124,7 @@ def oauth_error(
     }
 
 
-@router.get("/providers", response_model=list[ProviderSettingRead])
+@router.get("/providers", response_model=list[ProviderSettingRead], tags=["External: Providers"])
 def get_providers(
     db: DbSession,
     enabled_only: Annotated[bool, Query(description="Return only enabled providers")] = False,
@@ -155,7 +144,7 @@ def get_providers(
     return [p for p in all_providers if (not enabled_only or p.is_enabled) and (not cloud_only or p.has_cloud_api)]
 
 
-@router.put("/providers/{provider}", response_model=ProviderSettingRead)
+@router.put("/providers/{provider}", response_model=ProviderSettingRead, tags=["Internal: Providers"])
 def update_provider_status(
     provider: str,
     update: ProviderSettingUpdate,
@@ -171,7 +160,7 @@ def update_provider_status(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
-@router.put("/providers", response_model=list[ProviderSettingRead])
+@router.put("/providers", response_model=list[ProviderSettingRead], tags=["Internal: Providers"])
 def bulk_update_providers(
     updates: BulkProviderSettingsUpdate,
     db: DbSession,

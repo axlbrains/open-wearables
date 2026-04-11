@@ -1,3 +1,4 @@
+import contextlib
 import json
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
@@ -395,6 +396,42 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
         end_time = state.end_time
         start_time = state.start_time
 
+    # --- Merge with an adjacent existing session if one exists ---
+    source_for_lookup = state.source_name if state.source_name != "unknown" else None
+    adjacent = event_record_service.find_adjacent_sleep_record(
+        db_session,
+        UUID(user_id),
+        start_time,
+        end_time,
+        settings.sleep_end_gap_minutes,
+        source=source_for_lookup,
+        provider=state.provider,
+    )
+
+    if adjacent is not None:
+        # Deserialise the stored stages back to SleepStateStage so we can feed
+        # them into _calculate_final_metrics together with the new stages.
+        existing_state_stages: list[SleepStateStage] = []
+        if adjacent.detail and adjacent.detail.sleep_stages:
+            for s in adjacent.detail.sleep_stages:
+                with contextlib.suppress(Exception):
+                    existing_state_stages.append(SleepStateStage.model_validate(s))
+
+        # Recalculate from the union of both stage lists.
+        metrics, cleaned_stages = _calculate_final_metrics(existing_state_stages + state.stages)
+
+        # Expand the session window to cover both records.
+        start_time = min(adjacent.start_datetime, start_time)
+        end_time = max(adjacent.end_datetime, end_time)
+        if cleaned_stages:
+            start_time = min(start_time, cleaned_stages[0].start_time)
+            end_time = max(end_time, cleaned_stages[-1].end_time)
+
+        # Remove the old record before creating the merged one (cascade deletes detail).
+        event_record_service.delete(db_session, adjacent.id)
+
+    # ---
+
     total_duration = (end_time - start_time).total_seconds()
     total_sleep_seconds = (
         metrics["sleeping_seconds"] + metrics["light_seconds"] + metrics["deep_seconds"] + metrics["rem_seconds"]
@@ -411,7 +448,8 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
         category="sleep",
         type="sleep_session",
         source_name=state.source_name or "unknown",
-        source=state.provider or "unknown",
+        source=source_for_lookup,
+        provider=state.provider,
         device_model=state.device_model,
     )
 
