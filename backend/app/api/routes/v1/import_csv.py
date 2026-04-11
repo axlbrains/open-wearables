@@ -4,11 +4,13 @@ Supports importing workout history from fitness platform CSV exports.
 Currently supported formats: RunKeeper (cardioActivities.csv).
 """
 
+from uuid import UUID
+
 from fastapi import APIRouter, HTTPException, UploadFile, status
 
-from app.integrations.celery.tasks.process_csv_import_task import process_csv_import
+from app.database import DbSession
 from app.services import ApiKeyDep
-from app.services.csv_import.service import SUPPORTED_FORMATS
+from app.services.csv_import.service import SUPPORTED_FORMATS, csv_import_service
 
 router = APIRouter()
 
@@ -20,6 +22,7 @@ async def import_csv_file(
     user_id: str,
     source_format: str,
     file: UploadFile,
+    db: DbSession,
     _api_key: ApiKeyDep,
 ) -> dict:
     """Import workouts from a CSV file export.
@@ -31,8 +34,7 @@ async def import_csv_file(
     - **runkeeper**: Upload the ``cardioActivities.csv`` file from a
       RunKeeper data export.
 
-    The import runs asynchronously. Duplicate workouts (same provider,
-    start time, end time) are automatically skipped.
+    Duplicate workouts (same provider + time range) are automatically skipped.
     """
     if source_format not in SUPPORTED_FORMATS:
         raise HTTPException(
@@ -53,15 +55,16 @@ async def import_csv_file(
             detail="Empty file",
         )
 
-    task = process_csv_import.delay(
+    result = csv_import_service.import_csv(
+        db_session=db,
         content=content.decode("utf-8-sig"),
-        user_id=user_id,
+        user_id=UUID(user_id),
         source_format=source_format,
     )
 
     return {
-        "status": "processing",
-        "task_id": task.id,
+        "status": "completed",
         "user_id": user_id,
         "source_format": source_format,
+        **result,
     }

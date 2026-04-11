@@ -239,7 +239,7 @@ resource "google_cloud_scheduler_job" "sync_all_users_via_api" {
   region      = var.region
   name        = "${var.name_prefix}-prod-sync-all-users-api"
   description = "Sync all users via OW API (workaround for Cloud Tasks session issue)"
-  schedule    = "0 * * * *"
+  schedule    = "*/15 * * * *"
   time_zone   = "Etc/UTC"
 
   http_target {
