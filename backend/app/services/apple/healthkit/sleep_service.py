@@ -12,6 +12,7 @@ from app.constants.series_types.apple import (
 from app.constants.sleep import SleepStageType
 from app.database import DbSession
 from app.integrations.redis_client import get_redis_client
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -313,12 +314,9 @@ def handle_sleep_data(
         with contextlib.suppress(Exception):
             lock.release()
 
-    # import not at module level in order to avoid circular import
-    from app.integrations.celery.tasks.finalize_stale_sleep_task import finalize_stale_sleeps
-
     # Dispatch the stale-sleep task so sessions that have gone quiet (including
     # other users' sessions) are finalised promptly without waiting for the next beat.
-    finalize_stale_sleeps.delay()
+    dispatch_task(RegisteredTask.FINALIZE_STALE_SLEEPS)
 
 
 def _calculate_final_metrics(stages: list[SleepStateStage]) -> tuple[dict, list[SleepStage]]:

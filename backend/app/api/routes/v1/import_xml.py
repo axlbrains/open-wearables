@@ -4,7 +4,7 @@ from json import JSONDecodeError
 from fastapi import APIRouter, HTTPException, Request, UploadFile, status
 from pydantic import ValidationError
 
-from app.integrations.celery.tasks.process_xml_upload_task import process_xml_upload
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.providers.apple.apple_xml import (
     PresignedURLRequest,
     PresignedURLResponse,
@@ -38,7 +38,10 @@ def import_xml_file(
     file_contents = file.file.read()
     filename = file.filename or "upload.xml"
 
-    task = process_xml_upload.delay(file_contents=file_contents, filename=filename, user_id=user_id)
+    task = dispatch_task(
+        RegisteredTask.PROCESS_XML_UPLOAD,
+        kwargs={"file_contents": file_contents, "filename": filename, "user_id": user_id},
+    )
 
     return {
         "status": "processing",

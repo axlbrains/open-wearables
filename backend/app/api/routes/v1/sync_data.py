@@ -12,10 +12,8 @@ from app.integrations.celery.tasks import (
     get_garmin_backfill_status,
     reset_garmin_type_status,
     set_garmin_cancel_flag,
-    start_garmin_full_backfill,
-    sync_vendor_data,
-    trigger_garmin_backfill_for_type,
 )
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.enums import ProviderName
 from app.services import ApiKeyDep
 from app.services.providers.factory import ProviderFactory
@@ -35,13 +33,16 @@ def _queue_pull_sync(
     *,
     is_historical: bool = False,
 ) -> Any:
-    """Enqueue a pull-API sync task and return the Celery AsyncResult."""
-    return sync_vendor_data.delay(
-        user_id=str(user_id),
-        start_date=start_date,
-        end_date=end_date,
-        providers=[provider_value],
-        is_historical=is_historical,
+    """Enqueue a pull-API sync task and return the AsyncResult."""
+    return dispatch_task(
+        RegisteredTask.SYNC_VENDOR_DATA,
+        kwargs={
+            "user_id": str(user_id),
+            "start_date": start_date,
+            "end_date": end_date,
+            "providers": [provider_value],
+            "is_historical": is_historical,
+        },
     )
 
 
@@ -312,7 +313,10 @@ def retry_garmin_backfill_type(
 
     # Reset the type status to pending and trigger backfill
     reset_garmin_type_status(str(user_id), type_name)
-    trigger_garmin_backfill_for_type.delay(str(user_id), type_name)
+    dispatch_task(
+        RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+        args=[str(user_id), type_name],
+    )
 
     return {
         "success": True,
@@ -359,7 +363,10 @@ def sync_historical_data(
 
     # Webhook-based async export providers (e.g. Garmin)
     if caps.supports_async_export:
-        task = start_garmin_full_backfill.delay(str(user_id))
+        task = dispatch_task(
+            RegisteredTask.START_GARMIN_FULL_BACKFILL,
+            args=[str(user_id)],
+        )
         return {
             "success": True,
             "provider": provider.value,

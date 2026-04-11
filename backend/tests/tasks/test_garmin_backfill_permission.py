@@ -78,9 +78,8 @@ class TestBackfillPermissionCheck:
             patch(f"{MODULE}.is_cancelled", return_value=False),
             patch(f"{MODULE}.init_window_state"),
             patch(f"{MODULE}.reset_type_status"),
-            patch(f"{MODULE}.trigger_backfill_for_type") as mock_trigger,
+            patch(f"{MODULE}.dispatch_task"),
         ):
-            mock_trigger.apply_async = MagicMock()
             result = start_full_backfill(str(uuid4()))
 
         assert result["status"] == "started"

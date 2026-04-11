@@ -11,7 +11,7 @@ from cryptography.x509 import load_pem_x509_certificate
 from fastapi import status
 
 from app.config import settings
-from app.integrations.celery.tasks.process_aws_upload_task import process_aws_upload
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.providers.apple.apple_xml import SNSNotification
 from app.schemas.responses.upload import UploadDataResponse
 from app.services.apple.apple_xml.aws_service import get_sns_client
@@ -170,10 +170,13 @@ class SNSService:
                 )
                 continue
 
-            process_aws_upload.delay(
-                bucket_name=bucket_name,
-                object_key=object_key,
-                user_id=user_id,
+            dispatch_task(
+                RegisteredTask.PROCESS_AWS_UPLOAD,
+                kwargs={
+                    "bucket_name": bucket_name,
+                    "object_key": object_key,
+                    "user_id": user_id,
+                },
             )
             dispatched += 1
 

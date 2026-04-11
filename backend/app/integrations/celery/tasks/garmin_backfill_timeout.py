@@ -9,6 +9,7 @@ from logging import getLogger
 from typing import Any
 
 from app.integrations.redis_client import get_redis_client
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.services.providers.garmin.backfill_config import (
     DELAY_BETWEEN_TYPES,
     TRIGGERED_TIMEOUT_SECONDS,
@@ -138,7 +139,11 @@ def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
                 remaining=remaining,
                 user_id=user_id_str,
             )
-            check_triggered_timeout.apply_async(args=[user_id_str, data_type], countdown=remaining)
+            dispatch_task(
+                RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT,
+                args=[user_id_str, data_type],
+                countdown=remaining,
+            )
             return {"status": "rescheduled", "remaining": remaining}
 
     mark_type_timed_out(user_id_str, data_type)
@@ -151,9 +156,11 @@ def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
     else:
         record_timed_out_entry(user_id_str, data_type, get_current_window(user_id_str))
 
-    from app.integrations.celery.tasks.garmin_backfill_task import trigger_next_pending_type
-
-    trigger_next_pending_type.apply_async(args=[user_id_str], countdown=DELAY_BETWEEN_TYPES)
+    dispatch_task(
+        RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+        args=[user_id_str],
+        countdown=DELAY_BETWEEN_TYPES,
+    )
 
     skip_count = get_type_skip_count(user_id_str, data_type)
     return {

@@ -529,14 +529,14 @@ class TestFinishSleep:
 class TestHandleSleepDataIntegration:
     """Integration tests for handle_sleep_data with real payload structures."""
 
-    @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
+    @patch("app.services.apple.healthkit.sleep_service.dispatch_task")
     @patch("app.services.apple.healthkit.sleep_service.event_record_service")
     @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
     def test_handle_real_payload_sleeping_stages(
         self,
         mock_redis_func: MagicMock,
         mock_event_service: MagicMock,
-        mock_finalize: MagicMock,
+        mock_dispatch: MagicMock,
         db: Session,
     ) -> None:
         """Process a synthetic payload with in_bed + sleeping stages.
@@ -562,11 +562,13 @@ class TestHandleSleepDataIntegration:
         handle_sleep_data(db, request, user_id)
 
         # Sleep state should be saved to Redis (session not yet finalized —
-        # that happens via finalize_stale_sleeps.delay())
+        # that happens via dispatch_task(FINALIZE_STALE_SLEEPS))
         assert mock_redis.set.called
 
         # The finalize task should be dispatched
-        mock_finalize.delay.assert_called_once()
+        from app.integrations.task_dispatcher import RegisteredTask
+
+        mock_dispatch.assert_called_once_with(RegisteredTask.FINALIZE_STALE_SLEEPS)
 
         # Verify saved state: grab the last set() call's value
         last_set_call = mock_redis.set.call_args_list[-1]
@@ -585,14 +587,14 @@ class TestHandleSleepDataIntegration:
         assert len(sleeping_stages) >= 1
         assert len(in_bed_stages) == 1
 
-    @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
+    @patch("app.services.apple.healthkit.sleep_service.dispatch_task")
     @patch("app.services.apple.healthkit.sleep_service.event_record_service")
     @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
     def test_handle_detailed_stages_payload(
         self,
         mock_redis_func: MagicMock,
         mock_event_service: MagicMock,
-        mock_finalize: MagicMock,
+        mock_dispatch: MagicMock,
         db: Session,
     ) -> None:
         """Process a modern payload with detailed sleep stages."""
@@ -643,8 +645,8 @@ class TestSDKSyncEndpointSleep:
         user_id = str(uuid4())
         token = create_sdk_user_token("test_app", user_id)
 
-        with patch("app.api.routes.v1.sdk_sync.process_sdk_upload") as mock_task:
-            mock_task.delay.return_value = None
+        with patch("app.api.routes.v1.sdk_sync.dispatch_task") as mock_task:
+            mock_task.return_value = None
 
             response = client.post(
                 "/api/v1/sdk/users/" + user_id + "/sync/",
@@ -655,7 +657,7 @@ class TestSDKSyncEndpointSleep:
         assert response.status_code == 202
         data = response.json()
         assert data["status_code"] == 202
-        mock_task.delay.assert_called_once()
+        mock_task.assert_called_once()
 
     def test_sync_endpoint_accepts_detailed_stages(
         self,
@@ -668,8 +670,8 @@ class TestSDKSyncEndpointSleep:
         user_id = str(uuid4())
         token = create_sdk_user_token("test_app", user_id)
 
-        with patch("app.api.routes.v1.sdk_sync.process_sdk_upload") as mock_task:
-            mock_task.delay.return_value = None
+        with patch("app.api.routes.v1.sdk_sync.dispatch_task") as mock_task:
+            mock_task.return_value = None
 
             response = client.post(
                 "/api/v1/sdk/users/" + user_id + "/sync/",
@@ -692,14 +694,14 @@ class TestNoIntermediateRedisSaves:
     prevents this race condition.
     """
 
-    @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
+    @patch("app.services.apple.healthkit.sleep_service.dispatch_task")
     @patch("app.services.apple.healthkit.sleep_service.event_record_service")
     @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
     def test_redis_set_called_once_per_batch(
         self,
         mock_redis_func: MagicMock,
         mock_event_service: MagicMock,
-        mock_finalize: MagicMock,
+        mock_dispatch: MagicMock,
         db: Session,
     ) -> None:
         """Redis .set() should be called exactly once after processing all stages."""
@@ -748,14 +750,14 @@ class TestHistoricalBulkUploadMerging:
     regardless of how many payloads Apple sends.
     """
 
-    @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
+    @patch("app.services.apple.healthkit.sleep_service.dispatch_task")
     @patch("app.services.apple.healthkit.sleep_service.event_record_service")
     @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
     def test_second_payload_merges_with_adjacent_db_record(
         self,
         mock_redis_func: MagicMock,
         mock_event_service: MagicMock,
-        mock_finalize: MagicMock,
+        mock_dispatch: MagicMock,
         db: Session,
     ) -> None:
         """When payload B arrives after payload A has already been finalized to the
