@@ -1,10 +1,11 @@
 """Sleep score service.
 
-Exposes two entry points for computing a per-night OW sleep score using the
+Exposes three entry points for computing a per-night OW sleep score using the
 four-pillar algorithm (duration, stages, consistency, interruptions):
 
-- SleepScoreService.get_sleep_score   – pure calculation; accepts raw sleep parameters
-- SleepScoreService.get_sleep_score_for_user – DB-backed; fetches data from the database
+- SleepScoreService.get_sleep_score              - pure calculation; accepts raw sleep parameters
+- SleepScoreService.get_sleep_score_for_user     - DB-backed; single date, two DB queries
+- SleepScoreService.get_sleep_scores_for_date_range - DB-backed; multiple dates, one DB query
 """
 
 from datetime import date, datetime, timedelta, timezone
@@ -22,6 +23,7 @@ from app.repositories.event_record_repository import EventRecordRepository
 from app.schemas.model_crud.activities import EventRecordQueryParams
 from app.schemas.model_crud.activities.sleep import SleepStage
 from app.utils.exceptions import ResourceNotFoundError, handle_exceptions
+from app.utils.structured_logging import log_structured
 
 
 class WasoData(BaseModel):
@@ -223,6 +225,111 @@ class SleepScoreService:
             historical_bedtimes=historical_bedtimes,
             sleep_stages=sleep_stages,
         )
+
+    def get_sleep_scores_for_date_range(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        dates: list[date],
+    ) -> dict[date, SleepScoreResult]:
+        """Calculate sleep scores for multiple dates with a single DB query.
+
+        Fetches the full window (target dates + rolling window) once and loops
+        in memory, avoiding the multiple queries that repeated get_sleep_score_for_user
+        calls would incur.
+
+        Returns a dict mapping each date to its SleepScoreResult. Dates without
+        usable sleep data are omitted from the result.
+        """
+        if not dates:
+            return {}
+
+        earliest = min(dates)
+        latest = max(dates)
+
+        # Extend the window on each side to accommodate UTC timezone offsets and
+        # the fact that sleep sessions end in the early morning hours of the next
+        # calendar day.  window_end must reach past the latest possible end_datetime
+        # (sleep starting at 23:59 local + 10 h = ~10:00 next day UTC) so we add
+        # 2 days instead of 1.
+        window_start = datetime(earliest.year, earliest.month, earliest.day) - timedelta(
+            days=sleep_config.rolling_window_nights + 2
+        )
+        window_end = datetime(latest.year, latest.month, latest.day) + timedelta(days=2)
+
+        all_records, _ = self.event_record_repo.get_records_with_filters(
+            db_session,
+            EventRecordQueryParams(
+                category="sleep",
+                start_datetime=window_start,
+                end_datetime=window_end,
+                sort_by="start_datetime",
+                sort_order="asc",
+                # Override the default limit of 50 — date bounds are the real constraint.
+                limit=(len(dates) + sleep_config.rolling_window_nights) * 4,
+            ),
+            str(user_id),
+        )
+
+        # Build a per-night index keeping the longest non-nap session per calendar date.
+        sessions_by_date: dict[date, tuple[EventRecord, SleepDetails]] = {}
+        for record, _ in all_records:
+            if isinstance((detail := record.detail), SleepDetails) and not detail.is_nap:
+                local_start = self._apply_zone_offset(record.start_datetime, record.zone_offset)
+                night = local_start.date()
+                existing = sessions_by_date.get(night)
+                if existing is None or (detail.sleep_total_duration_minutes or 0) > (
+                    existing[1].sleep_total_duration_minutes or 0
+                ):
+                    sessions_by_date[night] = (record, detail)
+
+        all_nights_asc = sorted(sessions_by_date)
+        target_dates = set(dates)
+
+        results: dict[date, SleepScoreResult] = {}
+        skipped: list[tuple[date, str, str]] = []  # (date, record_id, reason)
+        for i, sleep_date in enumerate(all_nights_asc):
+            if sleep_date not in target_dates:
+                continue
+
+            record, detail = sessions_by_date[sleep_date]
+
+            # Historical bedtimes: up to rolling_window_nights nights before this one.
+            # i is already the split point — no search needed.
+            history_cutoff = sleep_date - timedelta(days=sleep_config.rolling_window_nights + 1)
+            prior_nights = all_nights_asc[max(0, i - sleep_config.rolling_window_nights) : i]
+            historical_bedtimes = [
+                self._apply_zone_offset(sessions_by_date[n][0].start_datetime, sessions_by_date[n][0].zone_offset)
+                for n in reversed(prior_nights)
+                if n >= history_cutoff
+            ]
+
+            sleep_stages: list[SleepStage] | None = None
+            if detail.sleep_stages:
+                sleep_stages = [SleepStage(**s) for s in detail.sleep_stages]
+
+            try:
+                results[sleep_date] = self.get_sleep_score(
+                    total_sleep_duration_minutes=float(detail.sleep_total_duration_minutes or 0),
+                    deep_minutes=float(detail.sleep_deep_minutes or 0),
+                    rem_minutes=float(detail.sleep_rem_minutes or 0),
+                    awake_minutes=float(detail.sleep_awake_minutes or 0),
+                    session_start=self._apply_zone_offset(record.start_datetime, record.zone_offset),
+                    historical_bedtimes=historical_bedtimes,
+                    sleep_stages=sleep_stages,
+                )
+            except (ValueError, OverflowError) as exc:
+                skipped.append((sleep_date, str(record.id), str(exc)))
+
+        if skipped:
+            log_structured(
+                self.logger,
+                "warning",
+                f"Skipped sleep score for {len(skipped)} date(s): invalid session data",
+                skipped=[{"date": str(d), "record_id": rid, "reason": reason} for d, rid, reason in skipped],
+            )
+
+        return results
 
 
 sleep_score_service = SleepScoreService(log=getLogger(__name__))

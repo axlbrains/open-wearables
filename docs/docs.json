@@ -8,6 +8,12 @@
     "dark": "#15803D"
   },
   "favicon": "/favicon.svg",
+  "redirects": [
+    {
+      "source": "/dev-guides/backend-e2e-integration",
+      "destination": "/dev-guides/integration-guide"
+    }
+  ],
   "navigation": {
     "tabs": [
       {
@@ -27,6 +33,14 @@
               "architecture/system-overview",
               "architecture/unified-data-model",
               "architecture/data-types"
+            ]
+          },
+          {
+            "group": "Health Scores",
+            "pages": [
+              "scores/health-scores",
+              "scores/sleep-score",
+              "scores/resilience-score"
             ]
           },
           {
@@ -95,10 +109,11 @@
           {
             "group": "Developer Guides",
             "pages": [
-              "dev-guides/backend-e2e-integration",
+              "dev-guides/integration-guide",
               "dev-guides/how-to-add-new-provider",
               "dev-guides/ngrok-setup",
-              "dev-guides/configure-local-fork"
+              "dev-guides/configure-local-fork",
+              "dev-guides/seed-data-generator"
             ]
           },
           {
@@ -138,6 +153,7 @@
             "group": "Integration Guides",
             "pages": [
               "api-reference/guides/quick-integration",
+              "api-reference/guides/webhooks",
               "api-reference/guides/apple-xml-import",
               "api-reference/guides/provider-setup",
               "api-reference/guides/error-handling"
@@ -185,19 +201,13 @@
             ]
           },
           {
-            "group": "Workouts",
-            "pages": [
-              "GET /api/v1/providers/{provider}/users/{user_id}/workouts",
-              "GET /api/v1/providers/{provider}/users/{user_id}/workouts/{workout_id}"
-            ]
-          },
-          {
             "group": "Summaries",
             "pages": [
               "GET /api/v1/users/{user_id}/summaries/activity",
               "GET /api/v1/users/{user_id}/summaries/sleep",
               "GET /api/v1/users/{user_id}/summaries/body",
-              "GET /api/v1/users/{user_id}/summaries/recovery"
+              "GET /api/v1/users/{user_id}/summaries/recovery",
+              "GET /api/v1/users/{user_id}/summaries/data"
             ]
           },
           {
@@ -239,6 +249,21 @@
               "POST /api/v1/users/{user_id}/token",
               "POST /api/v1/users/{user_id}/invitation-code",
               "POST /api/v1/invitation-code/redeem"
+            ]
+          },
+          {
+            "group": "Webhooks",
+            "pages": [
+              "GET /api/v1/webhooks/event-types",
+              "POST /api/v1/webhooks/endpoints",
+              "GET /api/v1/webhooks/endpoints",
+              "GET /api/v1/webhooks/endpoints/{endpoint_id}",
+              "PATCH /api/v1/webhooks/endpoints/{endpoint_id}",
+              "DELETE /api/v1/webhooks/endpoints/{endpoint_id}",
+              "GET /api/v1/webhooks/endpoints/{endpoint_id}/secret",
+              "POST /api/v1/webhooks/endpoints/{endpoint_id}/test",
+              "GET /api/v1/webhooks/messages",
+              "GET /api/v1/webhooks/endpoints/{endpoint_id}/attempts"
             ]
           }
         ]

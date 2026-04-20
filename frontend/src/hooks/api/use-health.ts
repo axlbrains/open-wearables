@@ -8,6 +8,7 @@ import type {
   TimeSeriesParams,
   SleepSessionsParams,
   BodySummaryParams,
+  HealthScoreParams,
 } from '@/lib/api/types';
 import { queryKeys } from '@/lib/query/keys';
 import { toast } from 'sonner';
@@ -107,6 +108,19 @@ export function useActivitySummaries(userId: string, params: SummaryParams) {
 }
 
 /**
+ * Get per-user data summary with counts by type and provider
+ * Uses GET /api/v1/users/{user_id}/summaries/data
+ */
+export function useUserDataSummary(userId: string) {
+  return useQuery({
+    queryKey: queryKeys.health.dataSummary(userId),
+    queryFn: () => healthService.getUserDataSummary(userId),
+    enabled: !!userId,
+    staleTime: 2 * 60 * 1000,
+  });
+}
+
+/**
  * Get body summary for a user (static, averaged, latest metrics)
  * Uses GET /api/v1/users/{user_id}/summaries/body
  */
@@ -115,6 +129,18 @@ export function useBodySummary(userId: string, params?: BodySummaryParams) {
     queryKey: queryKeys.health.bodySummary(userId, params),
     queryFn: () => healthService.getBodySummary(userId, params),
     enabled: !!userId,
+  });
+}
+
+/**
+ * Get health scores (sleep, recovery, readiness, etc.) for a user
+ * Uses GET /api/v1/users/{user_id}/health-scores
+ */
+export function useHealthScores(userId: string, params: HealthScoreParams) {
+  return useQuery({
+    queryKey: queryKeys.health.healthScores(userId, params),
+    queryFn: () => healthService.getHealthScores(userId, params),
+    enabled: !!userId && !!params.start_date && !!params.end_date,
   });
 }
 
@@ -145,6 +171,12 @@ export function useSynchronizeDataFromProvider(
       });
       queryClient.invalidateQueries({
         queryKey: queryKeys.health.bodySummary(userId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.health.dataSummary(userId),
+      });
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.health.healthScores(userId),
       });
 
       toast.success('Data synchronized successfully');

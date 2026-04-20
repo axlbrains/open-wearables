@@ -205,6 +205,27 @@ def flush_redis(_redis_url: str) -> Generator[None, None, None]:
 # ============================================================================
 
 
+@pytest.fixture(scope="session", autouse=True)
+def mock_svix_lifespan() -> Generator[MagicMock, None, None]:
+    """Prevent register_event_types() from making ~170 HTTP calls to Svix on
+    every TestClient lifespan startup during tests."""
+    with patch("app.services.outgoing_webhooks.svix.register_event_types") as mock:
+        yield mock
+
+
+@pytest.fixture(autouse=True)
+def mock_webhook_dispatch() -> Generator[MagicMock, None, None]:
+    """Prevent outgoing webhook tasks from attempting real Redis/Celery connections.
+
+    Patches the Celery task's delay so tests that don't care about webhook
+    emission never hang on a missing broker.  Tests that DO verify dispatch
+    behaviour override this via their own @patch decorator (innermost wins).
+    """
+    with patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event") as mock:
+        mock.delay.return_value = None
+        yield mock
+
+
 @pytest.fixture(autouse=True)
 def mock_celery_tasks(monkeypatch: pytest.MonkeyPatch) -> Generator[MagicMock, None, None]:
     """Mock Celery tasks to run synchronously."""
@@ -212,10 +233,13 @@ def mock_celery_tasks(monkeypatch: pytest.MonkeyPatch) -> Generator[MagicMock, N
     mock_task.delay.return_value = MagicMock()
     mock_task.apply_async.return_value = MagicMock()
 
+    mock_handler_celery = MagicMock()
+    mock_handler_celery.send_task.return_value.id = "mock-task-id"
+
     with (
         patch("celery.current_app") as mock_celery,
         # Prevent webhook handler from dispatching the backfill Celery task
-        patch("app.services.providers.garmin.webhook_handler.celery_app"),
+        patch("app.services.providers.garmin.webhook_handler.celery_app", mock_handler_celery),
     ):
         # Configure Celery to use in-memory broker and result backend
         # We Mock the conf object to return our test settings

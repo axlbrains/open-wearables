@@ -77,6 +77,8 @@ export const queryKeys = {
       [...queryKeys.health.all, 'activitySummaries', userId, params] as const,
     bodySummary: (userId: string, params?: unknown) =>
       [...queryKeys.health.all, 'bodySummary', userId, params] as const,
+    healthScores: (userId: string, params?: unknown) =>
+      [...queryKeys.health.all, 'healthScores', userId, params] as const,
     activity: (userId: string, days: number) =>
       [...queryKeys.health.all, 'activity', userId, days] as const,
     summary: (userId: string, period?: string) =>
@@ -85,6 +87,8 @@ export const queryKeys = {
       [...queryKeys.health.all, 'workouts', userId, params] as const,
     timeseries: (userId: string, params?: unknown) =>
       [...queryKeys.health.all, 'timeseries', userId, params] as const,
+    dataSummary: (userId: string) =>
+      [...queryKeys.health.all, 'dataSummary', userId] as const,
   },
 
   connections: {
@@ -157,5 +161,19 @@ export const queryKeys = {
     all: ['seedData'] as const,
     presets: () => [...queryKeys.seedData.all, 'presets'] as const,
     sleepProfiles: () => [...queryKeys.seedData.all, 'sleepProfiles'] as const,
+  },
+
+  webhooks: {
+    all: ['webhooks'] as const,
+    eventTypes: () => [...queryKeys.webhooks.all, 'eventTypes'] as const,
+    lists: () => [...queryKeys.webhooks.all, 'list'] as const,
+    list: () => [...queryKeys.webhooks.lists()] as const,
+    details: () => [...queryKeys.webhooks.all, 'detail'] as const,
+    detail: (id: string) => [...queryKeys.webhooks.details(), id] as const,
+    secret: (id: string) =>
+      [...queryKeys.webhooks.detail(id), 'secret'] as const,
+    messages: () => [...queryKeys.webhooks.all, 'messages'] as const,
+    attempts: (id: string) =>
+      [...queryKeys.webhooks.detail(id), 'attempts'] as const,
   },
 } as const;
