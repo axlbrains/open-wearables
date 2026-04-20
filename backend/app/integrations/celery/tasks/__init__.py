@@ -39,10 +39,10 @@ from .garmin_webhook_task import process_push as process_garmin_push
 from .periodic_sync_task import sync_all_users
 from .process_aws_upload_task import process_aws_upload
 from .process_csv_import_task import process_csv_import
-from .process_sdk_upload_task import process_sdk_upload
 from .process_sdk_upload_reference_task import process_sdk_upload_reference
-from .process_xml_upload_task import process_xml_upload
+from .process_sdk_upload_task import process_sdk_upload
 from .process_xml_upload_reference_task import process_xml_upload_reference
+from .process_xml_upload_task import process_xml_upload
 from .seed_data_task import generate_seed_data
 from .send_email_task import send_invitation_email_task
 from .sync_vendor_data_task import sync_vendor_data
