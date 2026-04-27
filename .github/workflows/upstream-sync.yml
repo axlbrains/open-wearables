@@ -16,11 +16,24 @@ env:
 
 jobs:
   sync:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: main
+            branch_prefix: chore/upstream-sync
+            title_prefix: "chore: sync upstream main"
+            heading: "Upstream sync — main"
+          - target: axl-integration
+            branch_prefix: chore/axl-integration-sync
+            title_prefix: "chore: sync axl-integration with upstream"
+            heading: "Upstream sync — axl-integration (deploy branch)"
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout ${{ matrix.target }}
         uses: actions/checkout@v4
         with:
+          ref: ${{ matrix.target }}
           fetch-depth: 0
           token: ${{ secrets.UPSTREAM_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
 
@@ -40,9 +53,10 @@ jobs:
           count=$(git rev-list --count "HEAD..upstream/${UPSTREAM_BRANCH}")
           echo "count=$count" >> "$GITHUB_OUTPUT"
           if [ "$count" -eq 0 ]; then
-            echo "Upstream has no new commits — nothing to sync." >> "$GITHUB_STEP_SUMMARY"
+            echo "## ${{ matrix.heading }}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Upstream has no new commits — nothing to sync into \`${{ matrix.target }}\`." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Found **$count** new commit(s) in \`upstream/${UPSTREAM_BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "Found $count new commit(s) in upstream/${UPSTREAM_BRANCH} relative to ${{ matrix.target }}."
           fi
 
       - name: Prepare sync branch
@@ -50,7 +64,7 @@ jobs:
         id: branch
         run: |
           date_tag=$(date -u +%Y-%m-%d)
-          branch="chore/upstream-sync-${date_tag}"
+          branch="${{ matrix.branch_prefix }}-${date_tag}"
           echo "name=$branch" >> "$GITHUB_OUTPUT"
           echo "date=$date_tag" >> "$GITHUB_OUTPUT"
           git checkout -B "$branch"
@@ -59,12 +73,12 @@ jobs:
         if: steps.check.outputs.count != '0'
         run: |
           if git merge --ff-only "upstream/${UPSTREAM_BRANCH}"; then
-            echo "Fast-forwarded to upstream/${UPSTREAM_BRANCH}."
+            echo "Fast-forwarded ${{ matrix.target }} to upstream/${UPSTREAM_BRANCH}."
           else
             echo "FF not possible — creating a merge commit."
             if ! git merge --no-ff --no-edit "upstream/${UPSTREAM_BRANCH}" \
-                 -m "chore: merge upstream/${UPSTREAM_BRANCH} (${{ steps.branch.outputs.date }})"; then
-              echo "::error::Merge conflicts detected — manual sync required this week."
+                 -m "chore: merge upstream/${UPSTREAM_BRANCH} into ${{ matrix.target }} (${{ steps.branch.outputs.date }})"; then
+              echo "::error::Merge conflicts in ${{ matrix.target }} — manual sync required this week."
               git merge --abort || true
               exit 1
             fi
@@ -73,7 +87,7 @@ jobs:
       - name: Build PR body and summary
         if: steps.check.outputs.count != '0'
         run: |
-          range="origin/${UPSTREAM_BRANCH}..HEAD"
+          range="origin/${{ matrix.target }}..HEAD"
           all=$(git log "$range" --pretty=format:'%h %s')
 
           # Conventional-commit groups, in display order.
@@ -81,14 +95,13 @@ jobs:
           alt=$(echo "$types" | tr ' ' '|')
 
           {
-            echo "## Upstream sync — ${{ steps.branch.outputs.date }}"
+            echo "## ${{ matrix.heading }} — ${{ steps.branch.outputs.date }}"
             echo
-            echo "**${{ steps.check.outputs.count }} new commit(s)** from \`the-momentum/open-wearables@${UPSTREAM_BRANCH}\`."
+            echo "**${{ steps.check.outputs.count }} new commit(s)** from \`the-momentum/open-wearables@${UPSTREAM_BRANCH}\` into \`${{ matrix.target }}\`."
             echo
             for t in $types; do
               matches=$(echo "$all" | grep -iE "^[0-9a-f]+ ${t}(\(.*\))?(!)?:" || true)
               if [ -n "$matches" ]; then
-                # Capitalize first letter for the header
                 header="$(echo "${t:0:1}" | tr '[:lower:]' '[:upper:]')${t:1}"
                 echo "### ${header}"
                 echo "$matches" | sed -E 's/^([0-9a-f]+) /- `\1` /'
@@ -121,7 +134,7 @@ jobs:
             --state open \
             --json number \
             --jq '.[0].number // empty')
-          title="chore: sync upstream main (${{ steps.branch.outputs.date }})"
+          title="${{ matrix.title_prefix }} (${{ steps.branch.outputs.date }})"
           if [ -n "$existing" ]; then
             gh pr edit "$existing" --title "$title" --body-file pr-body.md
             echo "Updated PR #$existing"
@@ -129,6 +142,6 @@ jobs:
             gh pr create \
               --title "$title" \
               --body-file pr-body.md \
-              --base "${UPSTREAM_BRANCH}" \
+              --base "${{ matrix.target }}" \
               --head "${{ steps.branch.outputs.name }}"
           fi
