@@ -15,6 +15,7 @@ from uuid import UUID
 from celery import shared_task
 
 from app.database import SessionLocal
+from app.integrations.idempotency import idempotent
 from app.integrations.redis_client import get_redis_client
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories.user_connection_repository import UserConnectionRepository
@@ -55,6 +56,7 @@ logger = getLogger(__name__)
 
 
 @shared_task
+@idempotent(key=lambda user_id: f"start_garmin_backfill:{user_id}", ttl_seconds=3600)
 def start_full_backfill(user_id: str) -> dict[str, Any]:
     """Initialize and start full 30-day backfill for all backfill data types.
 

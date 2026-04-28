@@ -5,6 +5,7 @@ from uuid import UUID
 from celery import shared_task
 
 from app.database import SessionLocal
+from app.integrations.idempotency import idempotent
 from app.models import User
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
@@ -25,7 +26,21 @@ def _get_import_service(provider: str) -> SDKImportService:
     raise ValueError(f"Unsupported provider: {provider}")
 
 
+def _sdk_upload_idem_key(
+    content: str,  # noqa: ARG001
+    content_type: str,  # noqa: ARG001
+    user_id: str,  # noqa: ARG001
+    provider: str,  # noqa: ARG001
+    batch_id: str | None = None,
+) -> str:
+    if not batch_id:
+        # No stable key — let the dedup decorator fall through and run the task.
+        raise ValueError("batch_id required for SDK-upload idempotency")
+    return f"sdk_upload:{batch_id}"
+
+
 @shared_task(queue="sdk_sync")
+@idempotent(key=_sdk_upload_idem_key, ttl_seconds=3600)
 def process_sdk_upload(
     content: str,
     content_type: str,

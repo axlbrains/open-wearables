@@ -8,6 +8,7 @@ from celery import shared_task
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
+from app.integrations.idempotency import idempotent
 from app.schemas.providers.apple.apple_xml import XMLParseStats
 from app.services import event_record_service
 from app.services.apple.apple_xml.xml_service import XMLService
@@ -19,7 +20,16 @@ from app.utils.structured_logging import log_structured
 log = getLogger(__name__)
 
 
+def _xml_upload_idem_key(
+    file_contents: bytes,  # noqa: ARG001
+    filename: str,
+    user_id: str,
+) -> str:
+    return f"xml_upload:{user_id}:{filename}"
+
+
 @shared_task
+@idempotent(key=_xml_upload_idem_key, ttl_seconds=3600)
 def process_xml_upload(file_contents: bytes, filename: str, user_id: str) -> dict[str, Any]:
     """
     Process XML file and import to Postgres database.
