@@ -1,12 +1,21 @@
 from datetime import datetime, timedelta, timezone
+from logging import getLogger
+from typing import cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func
+from sqlalchemy import CursorResult, and_, func, update
+from sqlalchemy.orm.exc import MultipleResultsFound
 
 from app.database import DbSession
 from app.models import UserConnection
 from app.repositories.repositories import CrudRepository
-from app.schemas import ConnectionStatus, UserConnectionCreate, UserConnectionUpdate
+from app.schemas.auth import ConnectionStatus
+from app.schemas.model_crud.user_management import (
+    UserConnectionCreate,
+    UserConnectionUpdate,
+)
+
+logger = getLogger(__name__)
 
 
 class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCreate, UserConnectionUpdate]):
@@ -85,17 +94,74 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         Useful for webhook processing where we receive provider's user ID
         and need to find our internal user.
         """
-        return (
-            db_session.query(self.model)
-            .filter(
-                and_(
-                    self.model.provider == provider,
-                    self.model.provider_user_id == provider_user_id,
-                    self.model.status == ConnectionStatus.ACTIVE,
-                ),
+        try:
+            return (
+                db_session.query(self.model)
+                .filter(
+                    and_(
+                        self.model.provider == provider,
+                        self.model.provider_user_id == provider_user_id,
+                        self.model.status == ConnectionStatus.ACTIVE,
+                    ),
+                )
+                .one_or_none()
             )
-            .one_or_none()
-        )
+        except MultipleResultsFound:
+            logger.warning(
+                "Multiple active connections found for provider_user_id — returning first",
+                extra={"provider": provider, "provider_user_id": provider_user_id},
+            )
+            return (
+                db_session.query(self.model)
+                .filter(
+                    and_(
+                        self.model.provider == provider,
+                        self.model.provider_user_id == provider_user_id,
+                        self.model.status == ConnectionStatus.ACTIVE,
+                    ),
+                )
+                .first()
+            )
+
+    def get_by_provider_username(
+        self,
+        db_session: DbSession,
+        provider: str,
+        provider_username: str,
+    ) -> UserConnection | None:
+        """Get connection by provider and provider's display username.
+
+        Used by Suunto webhooks — the ``username`` field in the payload matches
+        the ``user`` JWT claim stored as ``provider_username``.
+        """
+        try:
+            return (
+                db_session.query(self.model)
+                .filter(
+                    and_(
+                        self.model.provider == provider,
+                        self.model.provider_username == provider_username,
+                        self.model.status == ConnectionStatus.ACTIVE,
+                    ),
+                )
+                .one_or_none()
+            )
+        except MultipleResultsFound:
+            logger.warning(
+                "Multiple active connections found for provider_username — returning first",
+                extra={"provider": provider, "provider_username": provider_username},
+            )
+            return (
+                db_session.query(self.model)
+                .filter(
+                    and_(
+                        self.model.provider == provider,
+                        self.model.provider_username == provider_username,
+                        self.model.status == ConnectionStatus.ACTIVE,
+                    ),
+                )
+                .first()
+            )
 
     def get_by_user_id(
         self,
@@ -126,6 +192,31 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
             )
             .all()
         )
+
+    def disconnect(self, db_session: DbSession, user_id: UUID, provider: str) -> int:
+        """Disconnect a provider in a single UPDATE query. Returns number of rows updated."""
+        result = cast(
+            CursorResult[tuple[()]],
+            db_session.execute(
+                update(UserConnection)
+                .where(
+                    and_(
+                        UserConnection.user_id == user_id,
+                        UserConnection.provider == provider,
+                        UserConnection.status != ConnectionStatus.REVOKED,
+                    ),
+                )
+                .values(
+                    status=ConnectionStatus.REVOKED,
+                    access_token=None,
+                    refresh_token=None,
+                    token_expires_at=None,
+                    updated_at=datetime.now(timezone.utc),
+                ),
+            ),
+        )
+        db_session.commit()
+        return result.rowcount
 
     def mark_as_revoked(self, db_session: DbSession, connection: UserConnection) -> UserConnection:
         """Mark connection as revoked (when refresh token fails)."""
@@ -189,6 +280,7 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         if scope and connection.scope != scope:
             connection.scope = scope
 
+        connection.status = ConnectionStatus.ACTIVE
         connection.updated_at = datetime.now(timezone.utc)
         db_session.add(connection)
         db_session.commit()

@@ -1,11 +1,28 @@
 import logging
 import sys
-from logging import Formatter, StreamHandler, getLogger
+from logging import Formatter, LogRecord, StreamHandler, getLogger
 
-from app.config import settings
 from celery import Celery, signals
 from celery import current_app as current_celery_app
 from celery.schedules import crontab
+
+from app.config import settings
+from app.services import raw_payload_storage
+
+_WEBHOOK_TASK = "emit_webhook_event_task.emit_webhook_event"
+
+
+class _WebhookTraceFilter(logging.Filter):
+    """Drop celery.app.trace success/retry records for the webhook emit task.
+
+    Failures (ERROR and above) are always passed through.
+    """
+
+    def filter(self, record: LogRecord) -> bool:
+        if record.levelno >= logging.ERROR:
+            return True
+        msg = record.getMessage()
+        return _WEBHOOK_TASK not in msg
 
 
 @signals.setup_logging.connect
@@ -38,6 +55,23 @@ def setup_celery_logging(**kwargs) -> None:
     celery_logger.setLevel(logging.INFO)
     celery_logger.propagate = False
 
+    # celery.app.trace logs "Task ... succeeded in Xs: {result}" at INFO for
+    # every task execution.  Suppress those lines only for the high-frequency
+    # webhook emit task to avoid log spam while keeping traces for all others.
+    getLogger("celery.app.trace").addFilter(_WebhookTraceFilter())
+
+
+@signals.worker_init.connect
+def init_raw_payload_storage(**kwargs) -> None:
+    """Initialize raw payload storage in celery workers."""
+    raw_payload_storage.configure(
+        settings.raw_payload_storage,
+        settings.raw_payload_max_size_bytes,
+        s3_bucket=settings.raw_payload_s3_bucket or settings.aws_bucket_name,
+        s3_prefix=settings.raw_payload_s3_prefix,
+        s3_endpoint_url=settings.raw_payload_s3_endpoint_url,
+    )
+
 
 def create_celery() -> Celery:
     celery_app: Celery = current_celery_app  # type: ignore[assignment]
@@ -52,16 +86,20 @@ def create_celery() -> Celery:
         task_default_queue="default",
         task_default_exchange="default",
         result_expires=3 * 24 * 3600,
+        control_queue_ttl=300,
+        control_queue_expires=300,
         task_queues={
             "default": {},
             "sdk_sync": {},
+            "garmin_sync": {},
+            "webhook_sync": {},
         },
         task_routes={
             "app.integrations.celery.tasks.process_sdk_upload_task.process_sdk_upload": {"queue": "sdk_sync"},
         },
     )
 
-    celery_app.autodiscover_tasks(["app.integrations.celery.tasks"])
+    celery_app.autodiscover_tasks(["app.integrations.celery.tasks", "app.integrations.celery.tasks.garmin"])
 
     celery_app.conf.beat_schedule = {
         "sync-all-users-periodic": {
@@ -77,7 +115,7 @@ def create_celery() -> Celery:
             "kwargs": {},
         },
         "gc-stuck-garmin-backfills": {
-            "task": "app.integrations.celery.tasks.garmin_gc_task.gc_stuck_backfills",
+            "task": "app.integrations.celery.tasks.garmin.gc_task.gc_stuck_backfills",
             "schedule": 180.0,  # Every 3 minutes
             "args": (),
             "kwargs": {},
@@ -85,6 +123,18 @@ def create_celery() -> Celery:
         "run-daily-archival": {
             "task": "app.integrations.celery.tasks.archival_task.run_daily_archival",
             "schedule": crontab(hour=3, minute=0),  # Daily at 03:00 UTC
+            "args": (),
+            "kwargs": {},
+        },
+        "fill-missing-sleep-scores": {
+            "task": "app.integrations.celery.tasks.fill_missing_sleep_scores_task.fill_missing_sleep_scores",
+            "schedule": float(settings.sleep_score_interval_seconds),
+            "args": (),
+            "kwargs": {},
+        },
+        "fill-missing-resilience-scores": {
+            "task": "app.integrations.celery.tasks.fill_missing_resilience_scores_task.fill_missing_resilience_scores",
+            "schedule": float(settings.resilience_score_interval_seconds),
             "args": (),
             "kwargs": {},
         },

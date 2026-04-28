@@ -1,5 +1,8 @@
+import contextlib
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
+
+from celery import shared_task
 
 from app.config import settings
 from app.database import SessionLocal
@@ -10,7 +13,6 @@ from app.services.apple.healthkit.sleep_service import (
     load_sleep_state,
 )
 from app.utils.sentry_helpers import log_and_capture_error
-from celery import shared_task
 
 logger = getLogger(__name__)
 
@@ -23,15 +25,26 @@ def finalize_stale_sleeps() -> None:
     with SessionLocal() as db:
         for user_id in redis_client.smembers(active_users_key()):
             try:
-                state = load_sleep_state(user_id)
-                if not state:
+                # Skip users whose upload is currently in progress.
+                lock = redis_client.lock(f"sleep:lock:{user_id}", timeout=30, blocking_timeout=0)
+                if not lock.acquire(blocking=False):
                     continue
-                end_time = state.end_time
-                if end_time.tzinfo is None:
-                    end_time = end_time.replace(tzinfo=timezone.utc)
 
-                if now - end_time >= timedelta(minutes=settings.sleep_end_gap_minutes):
-                    finish_sleep(db, user_id, state)
+                try:
+                    state = load_sleep_state(user_id)
+                    if not state:
+                        continue
+
+                    end_time = state.end_time
+                    if end_time.tzinfo is None:
+                        end_time = end_time.replace(tzinfo=timezone.utc)
+
+                    if now - end_time >= timedelta(minutes=settings.sleep_end_gap_minutes):
+                        finish_sleep(db, user_id, state)
+                finally:
+                    with contextlib.suppress(Exception):
+                        lock.release()
+
             except Exception as e:
                 log_and_capture_error(
                     e,

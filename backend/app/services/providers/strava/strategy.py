@@ -1,4 +1,4 @@
-from app.services.providers.base_strategy import BaseProviderStrategy
+from app.services.providers.base_strategy import BaseProviderStrategy, ProviderCapabilities
 from app.services.providers.strava.oauth import StravaOAuth
 from app.services.providers.strava.workouts import StravaWorkouts
 
@@ -38,3 +38,11 @@ class StravaStrategy(BaseProviderStrategy):
     def api_base_url(self) -> str:
         """Base URL for the provider's API."""
         return "https://www.strava.com/api/v3"
+
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        # Strava REST API is used for historical activity backfills.
+        # Strava webhook events contain only the object_id and aspect_type;
+        # the full activity must still be fetched via GET /activities/{id}.
+        return ProviderCapabilities(rest_pull=True)  # use the line below after implementing webhooks
+        # return ProviderCapabilities(rest_pull=True, webhook_ping=True)

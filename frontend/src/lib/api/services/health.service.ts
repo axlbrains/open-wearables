@@ -4,6 +4,8 @@ import type {
   UserConnection,
   EventRecordResponse,
   HealthDataParams,
+  HealthScoreParams,
+  HealthScoreResponse,
   PaginatedResponse,
   TimeSeriesParams,
   TimeSeriesSample,
@@ -16,6 +18,7 @@ import type {
   RecoverySummary,
   SleepSession,
   SleepSessionsParams,
+  UserDataSummary,
 } from '../types';
 
 export interface WorkoutsParams {
@@ -60,6 +63,25 @@ export const healthService = {
   },
 
   /**
+   * Trigger historical data sync for a provider
+   * Garmin: 30-day webhook backfill; others: pull API with date range
+   */
+  async syncHistoricalData(
+    provider: string,
+    userId: string,
+    days?: number
+  ): Promise<{ success: boolean; task_id: string; method: string }> {
+    const params = days ? { days } : undefined;
+    return apiClient.post<{
+      success: boolean;
+      task_id: string;
+      method: string;
+    }>(`/api/v1/providers/${provider}/users/${userId}/sync/historical`, null, {
+      params,
+    });
+  },
+
+  /**
    * Get Garmin backfill status with per-window matrix
    * Returns multi-window sequential sync progress (webhook-based)
    */
@@ -95,6 +117,15 @@ export const healthService = {
       user_id: string;
       message: string;
     }>(`/api/v1/providers/garmin/users/${userId}/backfill/cancel`);
+  },
+
+  /**
+   * Disconnect a user from a provider
+   */
+  async disconnectProvider(userId: string, provider: string): Promise<void> {
+    await apiClient.delete(
+      API_ENDPOINTS.userConnectionDisconnect(userId, provider)
+    );
   },
 
   /**
@@ -204,6 +235,19 @@ export const healthService = {
   },
 
   /**
+   * Get health scores (sleep, recovery, readiness, etc.) for a user
+   */
+  async getHealthScores(
+    userId: string,
+    params?: HealthScoreParams
+  ): Promise<PaginatedResponse<HealthScoreResponse>> {
+    return apiClient.get<PaginatedResponse<HealthScoreResponse>>(
+      API_ENDPOINTS.userHealthScores(userId),
+      { params }
+    );
+  },
+
+  /**
    * Get sleep sessions for a date range
    */
   async getSleepSessions(
@@ -213,6 +257,33 @@ export const healthService = {
     return apiClient.get<PaginatedResponse<SleepSession>>(
       API_ENDPOINTS.userSleepSessions(userId),
       { params }
+    );
+  },
+
+  /**
+   * Get per-user data summary with counts by type and provider
+   */
+  async getUserDataSummary(userId: string): Promise<UserDataSummary> {
+    return apiClient.get<UserDataSummary>(
+      API_ENDPOINTS.userDataSummary(userId)
+    );
+  },
+
+  /**
+   * Delete a workout event
+   */
+  async deleteWorkout(userId: string, workoutId: string): Promise<void> {
+    return apiClient.delete<void>(
+      API_ENDPOINTS.userWorkoutDetail(userId, workoutId)
+    );
+  },
+
+  /**
+   * Delete a sleep session event
+   */
+  async deleteSleepSession(userId: string, sessionId: string): Promise<void> {
+    return apiClient.delete<void>(
+      API_ENDPOINTS.userSleepSessionDetail(userId, sessionId)
     );
   },
 };

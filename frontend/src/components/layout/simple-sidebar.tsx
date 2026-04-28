@@ -6,6 +6,7 @@ import {
   LogOut,
   Settings,
   ExternalLink,
+  Webhook,
 } from 'lucide-react';
 import logotype from '@/logotype.svg';
 import { cn } from '@/lib/utils';
@@ -25,13 +26,19 @@ const menuItems = [
     icon: Users,
   },
   {
+    title: 'Webhooks',
+    url: ROUTES.webhooks,
+    icon: Webhook,
+    badge: 'Beta',
+  },
+  {
     title: 'Settings',
     url: ROUTES.settings,
     icon: Settings,
   },
   {
     title: 'Documentation',
-    url: 'https://docs.openwearables.io/',
+    url: 'https://openwearables.io/docs',
     icon: FileText,
     external: true,
   },
@@ -87,6 +94,11 @@ export function SimpleSidebar() {
                 )}
               />
               <span>{item.title}</span>
+              {item.badge ? (
+                <span className="ml-auto rounded-full border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-300">
+                  {item.badge}
+                </span>
+              ) : null}
             </Link>
           );
         })}
