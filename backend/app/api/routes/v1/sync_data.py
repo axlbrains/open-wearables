@@ -35,6 +35,7 @@ def _queue_pull_sync(
     is_historical: bool = False,
 ) -> Any:
     """Enqueue a pull-API sync task and return the dispatch handle."""
+    historical = "h" if is_historical else "l"
     return dispatch_task(
         RegisteredTask.SYNC_VENDOR_DATA,
         kwargs={
@@ -44,6 +45,7 @@ def _queue_pull_sync(
             "providers": [provider_value],
             "is_historical": is_historical,
         },
+        dedup_key=f"sync_vendor:{user_id}:{provider_value}:{start_date}:{end_date}:{historical}",
     )
 
 

@@ -106,6 +106,7 @@ def sync_sdk_data(
             "provider": provider,
             "batch_id": batch_id,
         },
+        dedup_key=f"sdk_upload:{batch_id}",
     )
 
     return UploadDataResponse(status_code=202, response="Import task queued successfully", user_id=user_id)

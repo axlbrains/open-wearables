@@ -1,9 +1,11 @@
 import base64
 import importlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from logging import getLogger
 from typing import Any
 
 import httpx
@@ -12,8 +14,12 @@ from celery import current_app as current_celery_app
 from app.config import settings
 from app.integrations.google_auth import get_google_access_token
 
+logger = getLogger(__name__)
+
 _CLOUD_TASKS_API_BASE_URL = "https://cloudtasks.googleapis.com/v2"
 _BYTES_MARKER = "__open_wearables_bytes__"
+_TASK_ID_INVALID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+_TASK_ID_MAX_LEN = 500
 
 
 class TaskDispatchBackend(str, Enum):
@@ -51,6 +57,7 @@ class TaskDispatchHandle:
     id: str | None
     backend: TaskDispatchBackend
     target: str
+    deduplicated: bool = False
 
 
 TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
@@ -128,7 +135,21 @@ def dispatch_task(
     args: list[Any] | None = None,
     kwargs: dict[str, Any] | None = None,
     countdown: int | None = None,
+    dedup_key: str | None = None,
 ) -> TaskDispatchHandle:
+    """Dispatch a registered task to the configured backend.
+
+    ``dedup_key`` is optional scheduling-level deduplication: when set, the task
+    is given a stable Cloud Tasks name. A second dispatch with the same key
+    while the first is still in the queue (or recently completed, ~1h) is
+    rejected by Cloud Tasks with 409 ALREADY_EXISTS — we swallow that and
+    return ``TaskDispatchHandle(deduplicated=True)``.
+
+    This catches accidental double-dispatch from app code. It does NOT prevent
+    duplicate execution from Cloud Tasks retries (those reuse the same name);
+    for that, wrap the handler with ``@idempotent`` from
+    ``app.integrations.idempotency``.
+    """
     task_key = _normalize_task(task)
     task_args = args or []
     task_kwargs = kwargs or {}
@@ -140,12 +161,15 @@ def dispatch_task(
     definition = TASK_DEFINITIONS[task_key]
 
     if backend is TaskDispatchBackend.CELERY:
+        # Celery doesn't dedupe natively; pass dedup_key as task_id so it shows
+        # up in result backends and logs, but accept that duplicates can run.
         result = current_celery_app.send_task(
             definition.task_name,
             args=task_args,
             kwargs=task_kwargs,
             countdown=countdown,
             queue=definition.celery_queue,
+            task_id=_sanitize_task_id(dedup_key) if dedup_key else None,
         )
         return TaskDispatchHandle(id=result.id, backend=backend, target=definition.task_name)
 
@@ -156,6 +180,7 @@ def dispatch_task(
             args=task_args,
             kwargs=task_kwargs,
             countdown=countdown,
+            dedup_key=dedup_key,
         )
 
     raise ValueError(f"Unsupported task dispatch backend: {settings.task_dispatch_backend}")
@@ -244,6 +269,7 @@ def _dispatch_cloud_task(
     args: list[Any],
     kwargs: dict[str, Any],
     countdown: int | None,
+    dedup_key: str | None = None,
 ) -> TaskDispatchHandle:
     project_id = _require_setting(settings.task_dispatcher_gcp_project_id, "task_dispatcher_gcp_project_id")
     location = _require_setting(settings.task_dispatcher_gcp_location, "task_dispatcher_gcp_location")
@@ -263,38 +289,57 @@ def _dispatch_cloud_task(
         }
     ).encode("utf-8")
 
-    task_request: dict[str, Any] = {
-        "task": {
-            "httpRequest": {
-                "httpMethod": "POST",
-                "url": target_url,
-                "headers": {
-                    "Content-Type": "application/json",
-                },
-                "body": base64.b64encode(request_body).decode("ascii"),
-                "oidcToken": {
-                    "serviceAccountEmail": service_account_email,
-                    "audience": audience,
-                },
-            }
+    task_body: dict[str, Any] = {
+        "httpRequest": {
+            "httpMethod": "POST",
+            "url": target_url,
+            "headers": {
+                "Content-Type": "application/json",
+            },
+            "body": base64.b64encode(request_body).decode("ascii"),
+            "oidcToken": {
+                "serviceAccountEmail": service_account_email,
+                "audience": audience,
+            },
         }
     }
 
+    queue_path = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
+    if dedup_key:
+        task_id = _sanitize_task_id(dedup_key)
+        task_body["name"] = f"{queue_path}/tasks/{task_id}"
+
     if countdown:
-        task_request["task"]["scheduleTime"] = (
+        task_body["scheduleTime"] = (
             datetime.now(timezone.utc) + timedelta(seconds=countdown)
         ).isoformat().replace("+00:00", "Z")
 
     access_token = get_google_access_token()
     response = httpx.post(
-        f"{_CLOUD_TASKS_API_BASE_URL}/projects/{project_id}/locations/{location}/queues/{queue_name}/tasks",
+        f"{_CLOUD_TASKS_API_BASE_URL}/{queue_path}/tasks",
         headers={
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         },
-        json=task_request,
+        json={"task": task_body},
         timeout=10.0,
     )
+
+    if dedup_key and response.status_code == 409:
+        # Cloud Tasks returns ALREADY_EXISTS when a task with this name is
+        # already enqueued or was recently completed. Treat as a successful
+        # deduplication — the prior dispatch covers this work.
+        logger.info(
+            "Cloud Tasks dispatch deduplicated",
+            extra={"task_key": task_key.value, "dedup_key": dedup_key},
+        )
+        return TaskDispatchHandle(
+            id=task_body.get("name"),
+            backend=TaskDispatchBackend.CLOUD_TASKS,
+            target=target_url,
+            deduplicated=True,
+        )
+
     response.raise_for_status()
     response_json = response.json()
 
@@ -303,6 +348,12 @@ def _dispatch_cloud_task(
         backend=TaskDispatchBackend.CLOUD_TASKS,
         target=target_url,
     )
+
+
+def _sanitize_task_id(raw: str) -> str:
+    """Make ``raw`` a valid Cloud Tasks task ID: ``[a-zA-Z0-9_-]{1,500}``."""
+    sanitized = _TASK_ID_INVALID_CHARS.sub("_", raw)
+    return sanitized[:_TASK_ID_MAX_LEN] or "_"
 
 
 def _normalize_task(task: RegisteredTask | str) -> RegisteredTask:

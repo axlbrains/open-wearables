@@ -68,6 +68,7 @@ class GarminStrategy(BaseProviderStrategy):
         task = dispatch_task(
             RegisteredTask.START_GARMIN_FULL_BACKFILL,
             args=[str(user_id)],
+            dedup_key=f"start_garmin_backfill:{user_id}",
         )
         return HistoricalSyncResult(
             task_id=task.id,

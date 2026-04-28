@@ -45,6 +45,7 @@ def import_xml_file(
             "filename": filename,
             "user_id": user_id,
         },
+        dedup_key=f"xml_upload:{user_id}:{filename}",
     )
 
     return {

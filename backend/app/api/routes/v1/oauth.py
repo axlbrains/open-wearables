@@ -105,19 +105,22 @@ def oauth_callback(
             dispatch_task(
                 RegisteredTask.START_GARMIN_FULL_BACKFILL,
                 args=[str(oauth_state.user_id)],
+                dedup_key=f"start_garmin_backfill:{oauth_state.user_id}",
             )
         elif caps.rest_pull:
             now = datetime.now(timezone.utc)
             start_date = (now - timedelta(days=90)).isoformat()
+            end_date = now.isoformat()
             dispatch_task(
                 RegisteredTask.SYNC_VENDOR_DATA,
                 kwargs={
                     "user_id": str(oauth_state.user_id),
                     "start_date": start_date,
-                    "end_date": now.isoformat(),
+                    "end_date": end_date,
                     "providers": [provider.value],
                     "is_historical": True,
                 },
+                dedup_key=f"sync_vendor:{oauth_state.user_id}:{provider.value}:{start_date}:{end_date}:h",
             )
 
     # If a specific redirect_uri was requested (e.g. by frontend), redirect there

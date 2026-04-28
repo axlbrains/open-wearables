@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from celery import shared_task
 
 from app.database import SessionLocal
+from app.integrations.idempotency import idempotent
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.auth import LiveSyncMode
@@ -32,7 +33,20 @@ def _include_in_periodic_pull(caps: Any, live_sync_mode: LiveSyncMode | None, is
     return live_sync_mode == LiveSyncMode.PULL
 
 
+def _sync_vendor_idem_key(
+    user_id: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    providers: list[str] | None = None,
+    is_historical: bool = False,
+) -> str:
+    providers_part = ",".join(sorted(providers)) if providers else "all"
+    historical = "h" if is_historical else "l"
+    return f"sync_vendor:{user_id}:{providers_part}:{start_date}:{end_date}:{historical}"
+
+
 @shared_task
+@idempotent(key=_sync_vendor_idem_key, ttl_seconds=600)
 def sync_vendor_data(
     user_id: str,
     start_date: str | None = None,
