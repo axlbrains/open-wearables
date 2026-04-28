@@ -77,38 +77,59 @@ class EventRecordRepository(
             .one_or_none()
         )
 
+    def _upsert_returning(self, db_session: DbSession, creation: EventRecord) -> UUID | None:
+        """INSERT ... ON CONFLICT DO NOTHING ... RETURNING id.
+
+        Returns the new id on insert, or None when the unique
+        ``(data_source_id, start_datetime, end_datetime)`` index already had a row.
+        Unlike a plain INSERT inside a savepoint, ON CONFLICT does not raise
+        IntegrityError — so PostgreSQL doesn't log a duplicate-key ERROR.
+        """
+        values = {
+            col.name: getattr(creation, col.name)
+            for col in self.model.__table__.columns
+            if getattr(creation, col.name, None) is not None
+        }
+        stmt = (
+            insert(self.model)
+            .values(values)
+            .on_conflict_do_nothing(
+                index_elements=["data_source_id", "start_datetime", "end_datetime"],
+            )
+            .returning(self.model.id)
+        )
+        return db_session.execute(stmt).scalar_one_or_none()
+
     @handle_exceptions
     def create(self, db_session: DbSession, creator: EventRecordCreate) -> EventRecord:
         data_source_id, creation = self._build_creation(db_session, creator)
-        try:
-            db_session.add(creation)
+        inserted_id = self._upsert_returning(db_session, creation)
+        if inserted_id is not None:
             db_session.commit()
-            db_session.refresh(creation)
-            return creation
-        except IntegrityError:
-            db_session.rollback()
-            if existing := self._fetch_existing(db_session, data_source_id, creation):
-                return existing
-            raise
+            return db_session.query(self.model).filter(self.model.id == inserted_id).one()
+        # Conflict — return the existing row.
+        if existing := self._fetch_existing(db_session, data_source_id, creation):
+            return existing
+        raise IntegrityError(
+            "ON CONFLICT skipped insert but no existing event_record row matched", None, None
+        )
 
     def create_and_flush(self, db_session: DbSession, creator: EventRecordCreate) -> EventRecord:
         """Like create() but flushes instead of committing; caller is responsible for the commit.
 
-        Uses a savepoint for IntegrityError handling so a conflict rolls back only
-        the INSERT and leaves the outer transaction intact.
+        Uses ``INSERT ... ON CONFLICT DO NOTHING`` so a duplicate
+        ``(data_source_id, start_datetime, end_datetime)`` doesn't trigger a
+        Postgres ERROR log entry.
         """
         data_source_id, creation = self._build_creation(db_session, creator)
-        nested = db_session.begin_nested()
-        try:
-            db_session.add(creation)
-            db_session.flush()
-            nested.commit()
-            return creation
-        except IntegrityError:
-            nested.rollback()
-            if existing := self._fetch_existing(db_session, data_source_id, creation):
-                return existing
-            raise
+        inserted_id = self._upsert_returning(db_session, creation)
+        if inserted_id is not None:
+            return db_session.query(self.model).filter(self.model.id == inserted_id).one()
+        if existing := self._fetch_existing(db_session, data_source_id, creation):
+            return existing
+        raise IntegrityError(
+            "ON CONFLICT skipped insert but no existing event_record row matched", None, None
+        )
 
     @handle_exceptions
     def bulk_create(
