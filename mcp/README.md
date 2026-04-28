@@ -8,10 +8,11 @@ MCP (Model Context Protocol) server for Open Wearables, enabling AI assistants l
 - **get_activity_summary**: Get daily activity data (steps, calories, heart rate, intensity minutes)
 - **get_sleep_summary**: Get sleep data for a user within a date range
 - **get_workout_events**: Get workout/exercise sessions for a user within a date range
+- **get_timeseries**: Get granular time-series samples (weight, SpO2, HRV, intraday heart rate, etc.)
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) package manager
+- [uv](https://docs.astral.sh/uv/) **>=0.9.17** package manager — upgrade with `uv self update` if needed ([docs](https://docs.astral.sh/uv/getting-started/installation/#upgrading-uv))
 - Running Open Wearables backend (or access to a deployed instance)
 - Valid Open Wearables API key
 
@@ -188,7 +189,8 @@ mcp/
 │   │   ├── users.py      # get_users tool
 │   │   ├── activity.py   # get_activity_summary tool
 │   │   ├── sleep.py      # get_sleep_summary tool
-│   │   └── workouts.py   # get_workout_events tool
+│   │   ├── workouts.py   # get_workout_events tool
+│   │   └── timeseries.py # get_timeseries tool
 │   └── services/
 │       └── api_client.py # HTTP client for backend API
 ├── config/

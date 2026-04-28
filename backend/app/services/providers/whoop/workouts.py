@@ -5,15 +5,19 @@ from uuid import UUID, uuid4
 
 from app.constants.workout_types.whoop import get_unified_workout_type
 from app.database import DbSession
-from app.schemas import (
+from app.schemas.enums import HealthScoreCategory, ProviderName
+from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
     EventRecordMetrics,
-    WhoopWorkoutCollectionJSON,
-    WhoopWorkoutJSON,
+    HealthScoreCreate,
+    ScoreComponent,
 )
+from app.schemas.providers.whoop import WhoopWorkoutCollectionJSON, WhoopWorkoutJSON
 from app.services.event_record_service import event_record_service
+from app.services.health_score_service import health_score_service
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
+from app.services.raw_payload_storage import store_raw_payload
 from app.utils.structured_logging import log_structured
 
 
@@ -48,6 +52,13 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
 
             try:
                 response = self._make_api_request(db, user_id, "/v2/activity/workout", params=params)
+                store_raw_payload(
+                    source="api_response",
+                    provider="whoop",
+                    payload=response,
+                    user_id=str(user_id),
+                    trace_id="/v2/activity/workout",
+                )
 
                 # Parse response
                 if isinstance(response, dict):
@@ -71,6 +82,7 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
                     f"Error fetching Whoop workout data: {e}",
                     provider="whoop",
                     task="get_workouts",
+                    user_id=str(user_id),
                 )
                 # If we got some data, return what we have; otherwise re-raise
                 if all_workouts:
@@ -80,6 +92,7 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
                         f"Returning partial workout data due to error: {e}",
                         provider="whoop",
                         task="get_workouts",
+                        user_id=str(user_id),
                     )
                     break
                 raise
@@ -165,12 +178,48 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
 
         return metrics
 
-    def _normalize_workout(
+    def _normalize_strain_health_score(
         self,
         raw_workout: WhoopWorkoutJSON,
         user_id: UUID,
-    ) -> tuple[EventRecordCreate, EventRecordDetailCreate]:
-        """Normalize Whoop workout to EventRecordCreate and EventRecordDetailCreate."""
+    ) -> HealthScoreCreate | None:
+        """Extract strain health score from a Whoop workout record."""
+        if not raw_workout.score or raw_workout.score.strain is None:
+            return None
+        try:
+            recorded_at = datetime.fromisoformat(raw_workout.start.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
+        score = raw_workout.score
+        components = {
+            k: ScoreComponent(value=v)
+            for k, v in {
+                "average_heart_rate": score.average_heart_rate,
+                "max_heart_rate": score.max_heart_rate,
+                "kilojoule": score.kilojoule,
+                "percent_recorded": score.percent_recorded,
+                "distance_meter": score.distance_meter,
+                "altitude_gain_meter": score.altitude_gain_meter,
+                "altitude_change_meter": score.altitude_change_meter,
+            }.items()
+            if v is not None
+        }
+        return HealthScoreCreate(
+            id=uuid4(),
+            user_id=user_id,
+            provider=ProviderName.WHOOP,
+            category=HealthScoreCategory.STRAIN,
+            value=score.strain,
+            recorded_at=recorded_at,
+            components=components or None,
+        )
+
+    def _normalize_workout(  # type: ignore[override]
+        self,
+        raw_workout: WhoopWorkoutJSON,
+        user_id: UUID,
+    ) -> tuple[EventRecordCreate, EventRecordDetailCreate, HealthScoreCreate | None]:
+        """Normalize Whoop workout to EventRecordCreate, EventRecordDetailCreate, and strain HealthScoreCreate."""
         workout_id = uuid4()
 
         # Get workout type from sport_name (sport_id deprecated after 09/01/2025)
@@ -192,6 +241,7 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
             duration_seconds=duration_seconds,
             start_datetime=start_date,
             end_datetime=end_date,
+            zone_offset=raw_workout.timezone_offset,
             id=workout_id,
             external_id=raw_workout.id,  # Whoop workout UUID
             source=self.provider_name,
@@ -204,7 +254,7 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
             **metrics,
         )
 
-        return workout_create, workout_detail_create
+        return workout_create, workout_detail_create, self._normalize_strain_health_score(raw_workout, user_id)
 
     def _build_bundles(
         self,
@@ -215,7 +265,7 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
         for raw_workout in raw:
             # Only process workouts that are scored
             if raw_workout.score_state == "SCORED" or raw_workout.score is not None:
-                record, details = self._normalize_workout(raw_workout, user_id)
+                record, details, _ = self._normalize_workout(raw_workout, user_id)
                 yield record, details
 
     def load_data(
@@ -223,7 +273,7 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
         db: DbSession,
         user_id: UUID,
         **kwargs: Any,
-    ) -> bool:
+    ) -> int:
         """Load data from Whoop API with pagination."""
         all_workouts = []
         next_token = None
@@ -275,6 +325,13 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
 
             try:
                 response = self.get_workouts_from_api(db, user_id, **params)
+                store_raw_payload(
+                    source="api_response",
+                    provider="whoop",
+                    payload=response,
+                    user_id=str(user_id),
+                    trace_id="/v2/activity/workout",
+                )
 
                 # Parse response
                 if isinstance(response, dict):
@@ -294,7 +351,12 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
 
             except Exception as e:
                 log_structured(
-                    self.logger, "error", f"Error fetching Whoop workout data: {e}", provider="whoop", task="load_data"
+                    self.logger,
+                    "error",
+                    f"Error fetching Whoop workout data: {e}",
+                    provider="whoop",
+                    task="load_data",
+                    user_id=str(user_id),
                 )
                 # If we got some data, continue processing; otherwise re-raise
                 if all_workouts:
@@ -304,14 +366,26 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
                         f"Processing partial workout data due to error: {e}",
                         provider="whoop",
                         task="load_data",
+                        user_id=str(user_id),
                     )
                     break
                 raise
 
         # Process and save all workouts
-        for record, details in self._build_bundles(all_workouts, user_id):
-            created_record = event_record_service.create(db, record)
-            detail_for_record = details.model_copy(update={"record_id": created_record.id})
-            event_record_service.create_detail(db, detail_for_record)
+        count = 0
+        strain_scores: list[HealthScoreCreate] = []
+        for raw_workout in all_workouts:
+            if raw_workout.score_state == "SCORED" or raw_workout.score is not None:
+                record, details, strain_score = self._normalize_workout(raw_workout, user_id)
+                created_record = event_record_service.create(db, record)
+                detail_for_record = details.model_copy(update={"record_id": created_record.id})
+                event_record_service.create_detail(db, detail_for_record)
+                count += 1
+                if strain_score:
+                    strain_scores.append(strain_score)
 
-        return True
+        if strain_scores:
+            health_score_service.bulk_create(db, strain_scores)
+            db.commit()
+
+        return count

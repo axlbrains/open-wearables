@@ -10,7 +10,7 @@ from fastapi import APIRouter, status
 
 from app.database import DbSession
 from app.integrations.celery.tasks.archival_task import run_daily_archival
-from app.schemas.archival import ArchivalSettingUpdate, ArchivalSettingWithEstimate
+from app.schemas.utils import ArchivalSettingUpdate, ArchivalSettingWithEstimate
 from app.services import DeveloperDep
 from app.services.archival_service import archival_service
 
@@ -24,7 +24,7 @@ logger = getLogger(__name__)
     summary="Get data lifecycle settings",
     description="Returns current archival/retention configuration and storage size estimates.",
 )
-async def get_archival_settings(
+def get_archival_settings(
     db: DbSession,
     _developer: DeveloperDep,
 ) -> ArchivalSettingWithEstimate:
@@ -41,7 +41,7 @@ async def get_archival_settings(
         "Set to null to disable."
     ),
 )
-async def update_archival_settings(
+def update_archival_settings(
     db: DbSession,
     _developer: DeveloperDep,
     update: ArchivalSettingUpdate,
@@ -55,7 +55,7 @@ async def update_archival_settings(
     summary="Trigger archival job manually",
     description="Dispatches the daily archival + retention job via Celery. Returns immediately with the task ID.",
 )
-async def trigger_archival(
+def trigger_archival(
     _developer: DeveloperDep,
 ) -> dict[str, str]:
     result = run_daily_archival.delay()

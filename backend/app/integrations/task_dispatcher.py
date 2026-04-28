@@ -25,7 +25,6 @@ class RegisteredTask(str, Enum):
     CHECK_GARMIN_TRIGGERED_TIMEOUT = "check_garmin_triggered_timeout"
     FINALIZE_STALE_SLEEPS = "finalize_stale_sleeps"
     GC_STUCK_BACKFILLS = "gc_stuck_backfills"
-    POLL_SQS_TASK = "poll_sqs_task"
     PROCESS_AWS_UPLOAD = "process_aws_upload"
     PROCESS_SDK_UPLOAD = "process_sdk_upload"
     PROCESS_SDK_UPLOAD_REFERENCE = "process_sdk_upload_reference"
@@ -56,8 +55,8 @@ class TaskDispatchHandle:
 
 TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
     RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_backfill_task.check_triggered_timeout",
-        callable_path="app.integrations.celery.tasks.garmin_backfill_task.check_triggered_timeout",
+        task_name="app.integrations.celery.tasks.garmin.backfill_timeout.check_triggered_timeout",
+        callable_path="app.integrations.celery.tasks.garmin.backfill_timeout.check_triggered_timeout",
         cloud_tasks_queue="garmin_backfill",
     ),
     RegisteredTask.FINALIZE_STALE_SLEEPS: TaskDefinition(
@@ -65,12 +64,9 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         callable_path="app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps",
     ),
     RegisteredTask.GC_STUCK_BACKFILLS: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_gc_task.gc_stuck_backfills",
-        callable_path="app.integrations.celery.tasks.garmin_gc_task.gc_stuck_backfills",
-    ),
-    RegisteredTask.POLL_SQS_TASK: TaskDefinition(
-        task_name="app.integrations.celery.tasks.poll_sqs_task.poll_sqs_task",
-        callable_path="app.integrations.celery.tasks.poll_sqs_task.poll_sqs_task",
+        task_name="app.integrations.celery.tasks.garmin.gc_task.gc_stuck_backfills",
+        callable_path="app.integrations.celery.tasks.garmin.gc_task.gc_stuck_backfills",
+        cloud_tasks_queue="garmin_backfill",
     ),
     RegisteredTask.PROCESS_AWS_UPLOAD: TaskDefinition(
         task_name="app.integrations.celery.tasks.process_aws_upload_task.process_aws_upload",
@@ -101,8 +97,8 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         callable_path="app.integrations.celery.tasks.send_email_task.send_invitation_email_task",
     ),
     RegisteredTask.START_GARMIN_FULL_BACKFILL: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_backfill_task.start_full_backfill",
-        callable_path="app.integrations.celery.tasks.garmin_backfill_task.start_full_backfill",
+        task_name="app.integrations.celery.tasks.garmin.backfill_task.start_full_backfill",
+        callable_path="app.integrations.celery.tasks.garmin.backfill_task.start_full_backfill",
         cloud_tasks_queue="garmin_backfill",
     ),
     RegisteredTask.SYNC_ALL_USERS: TaskDefinition(
@@ -114,13 +110,13 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         callable_path="app.integrations.celery.tasks.sync_vendor_data_task.sync_vendor_data",
     ),
     RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_backfill_task.trigger_backfill_for_type",
-        callable_path="app.integrations.celery.tasks.garmin_backfill_task.trigger_backfill_for_type",
+        task_name="app.integrations.celery.tasks.garmin.backfill_trigger.trigger_backfill_for_type",
+        callable_path="app.integrations.celery.tasks.garmin.backfill_trigger.trigger_backfill_for_type",
         cloud_tasks_queue="garmin_backfill",
     ),
     RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_backfill_task.trigger_next_pending_type",
-        callable_path="app.integrations.celery.tasks.garmin_backfill_task.trigger_next_pending_type",
+        task_name="app.integrations.celery.tasks.garmin.backfill_task.trigger_next_pending_type",
+        callable_path="app.integrations.celery.tasks.garmin.backfill_task.trigger_next_pending_type",
         cloud_tasks_queue="garmin_backfill",
     ),
 }

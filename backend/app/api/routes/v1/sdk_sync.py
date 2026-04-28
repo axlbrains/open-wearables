@@ -3,9 +3,9 @@ from logging import getLogger
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.config import settings
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
-from app.schemas import SDKSyncRequest, UploadDataResponse
+from app.schemas.providers.mobile_sdk import SyncRequest
+from app.schemas.responses.upload import UploadDataResponse
 from app.services.raw_payload_storage import store_raw_payload
 from app.utils.auth import SDKAuthDep
 from app.utils.structured_logging import log_structured
@@ -14,10 +14,10 @@ router = APIRouter()
 logger = getLogger(__name__)
 
 
-@router.post("/sdk/users/{user_id}/sync")
-async def sync_sdk_data(
+@router.post("/sdk/users/{user_id}/sync", status_code=status.HTTP_202_ACCEPTED)
+def sync_sdk_data(
     user_id: str,
-    body: SDKSyncRequest,
+    body: SyncRequest,
     auth: SDKAuthDep,
 ) -> UploadDataResponse:
     """Import health data from SDK provider asynchronously via Celery.
@@ -57,7 +57,7 @@ async def sync_sdk_data(
     provider = body.provider.lower()
 
     # Validate provider
-    if provider not in ("apple", "samsung", "google", "auto-health-export"):
+    if provider not in ("apple", "samsung", "google"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported provider: {provider}. Supported: apple, samsung, google",

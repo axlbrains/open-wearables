@@ -1,19 +1,21 @@
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 
+from app.config import settings
 from app.database import DbSession
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
-from app.schemas import (
-    AuthorizationURLResponse,
+from app.schemas.enums import ProviderName
+from app.schemas.model_crud.credentials import AuthorizationURLResponse
+from app.schemas.model_crud.data_priority import (
     BulkProviderSettingsUpdate,
-    ProviderName,
     ProviderSettingRead,
     ProviderSettingUpdate,
 )
-from app.services import DeveloperDep
+from app.services import DeveloperDep, user_connection_service
 from app.services.provider_settings_service import ProviderSettingsService
 from app.services.providers.base_strategy import BaseProviderStrategy
 from app.services.providers.factory import ProviderFactory
@@ -35,8 +37,14 @@ def get_oauth_strategy(provider: ProviderName) -> BaseProviderStrategy:
     return strategy
 
 
-@router.get("/{provider}/authorize", response_model=AuthorizationURLResponse)
-async def authorize_provider(
+@router.get(
+    "/{provider}/authorize",
+    summary="Get Provider Authorization URL",
+    status_code=status.HTTP_200_OK,
+    response_model=AuthorizationURLResponse,
+    tags=["External: Providers"],
+)
+def authorize_provider(
     provider: ProviderName,
     user_id: Annotated[UUID, Query(description="User ID to connect")],
     redirect_uri: Annotated[str | None, Query(description="Optional redirect URI after authorization")] = None,
@@ -53,8 +61,8 @@ async def authorize_provider(
     return AuthorizationURLResponse(authorization_url=auth_url, state=state)
 
 
-@router.get("/{provider}/callback")
-async def oauth_callback(
+@router.get("/{provider}/callback", tags=["System: OAuth"])
+def oauth_callback(
     provider: ProviderName,
     db: DbSession,
     code: Annotated[str | None, Query(description="Authorization code from provider")] = None,
@@ -84,23 +92,33 @@ async def oauth_callback(
     assert strategy.oauth
     oauth_state = strategy.oauth.handle_callback(db, code, state)
 
-    # schedule sync task
-    dispatch_task(
-        RegisteredTask.SYNC_VENDOR_DATA,
-        kwargs={
-            "user_id": str(oauth_state.user_id),
-            "start_date": None,
-            "end_date": None,
-            "providers": [provider.value],
-        },
-    )
+    # Stamp last_synced_at=now so the first periodic sync uses the connection
+    # timestamp as its live-sync cursor and won't attempt to pull all history.
+    user_connection_service.stamp_last_synced_at(db, oauth_state.user_id, provider.value)
 
-    # For Garmin: Auto-trigger 30-day backfill for all backfill data types
-    if provider == ProviderName.GARMIN:
-        dispatch_task(
-            RegisteredTask.START_GARMIN_FULL_BACKFILL,
-            args=[str(oauth_state.user_id)],
-        )
+    # Grace-period flag: automatically kick off a historical sync so integrators
+    # who haven't yet adopted the explicit /sync/historical call still get backfill.
+    # Controlled by HISTORICAL_SYNC_ON_CONNECT (default: true).
+    if settings.historical_sync_on_connect:
+        caps = strategy.capabilities
+        if caps.webhook_callback:
+            dispatch_task(
+                RegisteredTask.START_GARMIN_FULL_BACKFILL,
+                args=[str(oauth_state.user_id)],
+            )
+        elif caps.rest_pull:
+            now = datetime.now(timezone.utc)
+            start_date = (now - timedelta(days=90)).isoformat()
+            dispatch_task(
+                RegisteredTask.SYNC_VENDOR_DATA,
+                kwargs={
+                    "user_id": str(oauth_state.user_id),
+                    "start_date": start_date,
+                    "end_date": now.isoformat(),
+                    "providers": [provider.value],
+                    "is_historical": True,
+                },
+            )
 
     # If a specific redirect_uri was requested (e.g. by frontend), redirect there
     if oauth_state.redirect_uri:
@@ -113,8 +131,8 @@ async def oauth_callback(
     )
 
 
-@router.get("/success")
-async def oauth_success(
+@router.get("/success", tags=["System: OAuth"])
+def oauth_success(
     provider: Annotated[str, Query()],
     user_id: Annotated[str, Query()],
 ) -> dict:
@@ -127,8 +145,8 @@ async def oauth_success(
     }
 
 
-@router.get("/error")
-async def oauth_error(
+@router.get("/error", tags=["System: OAuth"])
+def oauth_error(
     message: Annotated[str, Query()] = "OAuth authentication failed",
 ) -> dict:
     """OAuth error page."""
@@ -138,8 +156,8 @@ async def oauth_error(
     }
 
 
-@router.get("/providers", response_model=list[ProviderSettingRead])
-async def get_providers(
+@router.get("/providers", response_model=list[ProviderSettingRead], tags=["External: Providers"])
+def get_providers(
     db: DbSession,
     enabled_only: Annotated[bool, Query(description="Return only enabled providers")] = False,
     cloud_only: Annotated[bool, Query(description="Return only cloud (OAuth) providers")] = False,
@@ -158,24 +176,22 @@ async def get_providers(
     return [p for p in all_providers if (not enabled_only or p.is_enabled) and (not cloud_only or p.has_cloud_api)]
 
 
-@router.put("/providers/{provider}", response_model=ProviderSettingRead)
-async def update_provider_status(
+@router.put("/providers/{provider}", response_model=ProviderSettingRead, tags=["Internal: Providers"])
+def update_provider_setting(
     provider: str,
     update: ProviderSettingUpdate,
     db: DbSession,
     _developer: DeveloperDep,
 ):
-    """
-    Update single provider enabled status.
-    """
+    """Update is_enabled and/or live_sync_mode for a single provider."""
     try:
-        return settings_service.update_provider_status(db, provider, update)
+        return settings_service.update_provider_setting(db, provider, update)
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@router.put("/providers", response_model=list[ProviderSettingRead])
-async def bulk_update_providers(
+@router.put("/providers", response_model=list[ProviderSettingRead], tags=["Internal: Providers"])
+def bulk_update_providers(
     updates: BulkProviderSettingsUpdate,
     db: DbSession,
     _developer: DeveloperDep,
