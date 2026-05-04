@@ -132,17 +132,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
+          # Always pin --repo to the fork.  Without it gh defaults to the parent
+          # (upstream) repo on fork checkouts and the head branch is then looked
+          # up there, producing "Head sha can't be blank" / "Head ref must be a
+          # branch" errors.
+          REPO="${{ github.repository }}"
           existing=$(gh pr list \
+            --repo "$REPO" \
             --head "${{ steps.branch.outputs.name }}" \
             --state open \
             --json number \
             --jq '.[0].number // empty')
           title="${{ matrix.title_prefix }} (${{ steps.branch.outputs.date }})"
           if [ -n "$existing" ]; then
-            gh pr edit "$existing" --title "$title" --body-file pr-body.md
+            gh pr edit "$existing" --repo "$REPO" --title "$title" --body-file pr-body.md
             echo "Updated PR #$existing"
           else
             gh pr create \
+              --repo "$REPO" \
               --title "$title" \
               --body-file pr-body.md \
               --base "${{ matrix.target }}" \
