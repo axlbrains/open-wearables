@@ -324,3 +324,27 @@ variable "service_account_project_roles" {
   type        = map(list(string))
   default     = null
 }
+
+variable "backend_api_min_instances" {
+  description = "Minimum instance count for the backend API service (avoid cold starts on the public path)."
+  type        = number
+  default     = 0
+}
+
+variable "backend_worker_min_instances" {
+  description = "Minimum instance count for the worker service."
+  type        = number
+  default     = 0
+}
+
+variable "frontend_min_instances" {
+  description = "Minimum instance count for the frontend service."
+  type        = number
+  default     = 0
+}
+
+variable "backend_vpc_egress" {
+  description = "VPC egress mode for backend services. Use PRIVATE_RANGES_ONLY when only Cloud SQL / Memorystore needs the connector; ALL_TRAFFIC routes everything through the connector."
+  type        = string
+  default     = "ALL_TRAFFIC"
+}

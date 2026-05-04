@@ -68,10 +68,15 @@ resource "google_secret_manager_secret" "secrets" {
 }
 
 resource "google_secret_manager_secret_version" "versions" {
-  for_each = var.create_secrets ? var.secret_values : {}
+  # Iterate over the secret names (non-sensitive identifiers) and look up the
+  # value from the sensitive map by key.  TF >= 1.14 disallows sensitive
+  # values directly in for_each — using `nonsensitive(...)` on the key set
+  # keeps the resource addressable while preserving sensitivity of the
+  # actual secret payload below.
+  for_each = var.create_secrets ? nonsensitive(toset(keys(var.secret_values))) : toset([])
 
   secret      = google_secret_manager_secret.secrets[each.key].id
-  secret_data = each.value
+  secret_data = var.secret_values[each.key]
 
   depends_on = [google_secret_manager_secret.secrets]
 }
