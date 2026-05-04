@@ -35,7 +35,10 @@ jobs:
         with:
           ref: ${{ matrix.target }}
           fetch-depth: 0
-          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || secrets.GITHUB_TOKEN }}
+          # Use the default GITHUB_TOKEN for git push (it has contents:write
+          # via the workflow-level permissions block).  PAT is reserved for
+          # the gh-pr-create step where the enterprise token cap blocks the
+          # GraphQL createPullRequest mutation.
 
       - name: Configure git
         run: |
