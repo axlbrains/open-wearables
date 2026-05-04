@@ -328,6 +328,7 @@ export interface BodyAveraged {
   period_days: number;
   resting_heart_rate_bpm: number | null;
   avg_hrv_sdnn_ms: number | null;
+  avg_hrv_rmssd_ms: number | null;
   period_start: string;
   period_end: string;
 }
@@ -422,6 +423,10 @@ export interface ApiKey {
 
 export interface ApiKeyCreate {
   name: string;
+}
+
+export interface ApiKeyUpdate {
+  name?: string | null;
 }
 
 export interface Automation {
