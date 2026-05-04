@@ -1,4 +1,5 @@
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from logging import getLogger
 from typing import Any, cast
@@ -18,6 +19,22 @@ from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _ConnectionSyncCtx:
+    """Primitives extracted from a UserConnection at the start of sync.
+
+    Provider syncs commit the session multiple times (per-record upserts,
+    last_synced_at updates), which expires the original ORM object.  The
+    next iteration accessing ``connection.provider`` would trigger a lazy
+    load on a session that may already be in committed state, raising
+    ``InvalidRequestError``.  Snapshotting up front avoids that entirely.
+    """
+
+    id: UUID
+    provider: str
+    last_synced_at: datetime | None
 
 
 def _include_in_periodic_pull(caps: Any, live_sync_mode: LiveSyncMode | None, is_historical: bool) -> bool:
@@ -141,16 +158,27 @@ def sync_vendor_data(
                 result.message = "No active provider connections found"
                 return result.model_dump()
 
+            # Snapshot connection attributes before any provider sync runs.
+            # Provider sync code commits the session, which expires the ORM
+            # objects in `connections` and makes subsequent attribute access
+            # raise InvalidRequestError.  Iterating snapshots keeps us in
+            # plain primitives; we re-fetch the ORM connection by id at the
+            # end of each iteration when we need to update last_synced_at.
+            connection_ctxs = [
+                _ConnectionSyncCtx(id=c.id, provider=c.provider, last_synced_at=c.last_synced_at)
+                for c in connections
+            ]
+
             log_structured(
                 logger,
                 "info",
-                f"Found {len(connections)} active connections for user {user_id}",
+                f"Found {len(connection_ctxs)} active connections for user {user_id}",
                 task="sync_vendor_data",
                 user_id=user_id,
             )
 
-            for connection in connections:
-                provider_name = connection.provider
+            for ctx in connection_ctxs:
+                provider_name = ctx.provider
                 log_structured(
                     logger,
                     "info",
@@ -168,7 +196,7 @@ def sync_vendor_data(
                     # This ensures live syncs never re-pull history.
                     effective_start = start_date
                     if effective_start is None:
-                        last = connection.last_synced_at
+                        last = ctx.last_synced_at
                         if last is not None:
                             if last.tzinfo is None:
                                 last = last.replace(tzinfo=timezone.utc)
@@ -208,7 +236,7 @@ def sync_vendor_data(
                     # Sync 247 data (sleep, recovery, activity) and SAVE to database
                     if hasattr(strategy, "data_247") and strategy.data_247:
                         # Determine if this is first sync (for API compatibility with providers)
-                        is_first_sync = connection.last_synced_at is None
+                        is_first_sync = ctx.last_synced_at is None
 
                         # effective_start is always set above; parse into datetime objects
                         start_dt = datetime.fromisoformat(effective_start.replace("Z", "+00:00"))
@@ -269,7 +297,12 @@ def sync_vendor_data(
                             provider_result.params["data_247"] = {"success": False, "error": str(e)}
 
                     if not is_historical:
-                        user_connection_repo.update_last_synced_at(db, connection)
+                        # Re-fetch the ORM connection by id — the original list
+                        # is expired after each commit and accessing attrs would
+                        # trigger lazy loads on a stale session state.
+                        fresh_connection = user_connection_repo.get(db, ctx.id)
+                        if fresh_connection is not None:
+                            user_connection_repo.update_last_synced_at(db, fresh_connection)
 
                     result.providers_synced[provider_name] = provider_result
                     log_structured(

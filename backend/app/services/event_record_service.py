@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from logging import Logger, getLogger
@@ -14,6 +15,26 @@ from app.models import (
     SleepDetails,
     WorkoutDetails,
 )
+
+
+@dataclass(frozen=True)
+class _RecordSnapshot:
+    """Frozen primitives extracted from EventRecord + DataSource.
+
+    Built before SQLAlchemy commits so the after-commit webhook dispatch
+    never touches ORM attributes that have been expired by the commit.
+    """
+
+    record_id: UUID
+    user_id: UUID
+    category: str
+    record_type: str | None
+    start_datetime: datetime
+    end_datetime: datetime
+    duration_seconds: int | None
+    zone_offset: str | None
+    provider: str
+    device: str | None
 from app.repositories import (
     DataPointSeriesRepository,
     DataSourceRepository,
@@ -114,11 +135,12 @@ class EventRecordService(
         if record is not None and record.data_source_id is not None:
             data_source = db_session.get(DataSource, record.data_source_id)
             if data_source is not None:
-                _record, _data_source, _detail = record, data_source, detail
+                snapshot = self._snapshot_record(record, data_source)
+                _detail = detail
 
                 @sa_event.listens_for(db_session, "after_commit", once=True)
                 def _dispatch_webhook(session: DbSession) -> None:  # noqa: ARG001
-                    self._emit_event_record_webhook(_record, _data_source, _detail)
+                    self._emit_event_record_webhook(snapshot, _detail)
 
         return result  # type: ignore[return-value]
 
@@ -394,19 +416,35 @@ class EventRecordService(
         return created_record, True, new_detail
 
     @staticmethod
+    def _snapshot_record(record: EventRecord, data_source: DataSource) -> _RecordSnapshot:
+        """Capture all attributes the webhook payload needs as primitives.
+
+        Must be called before the SQLAlchemy session commits — once committed,
+        ORM attributes are expired and any subsequent access triggers a lazy
+        load on a closed transaction (raises ``InvalidRequestError``).
+        """
+        return _RecordSnapshot(
+            record_id=record.id,
+            user_id=data_source.user_id,
+            category=(record.category or "").lower(),
+            record_type=record.type,
+            start_datetime=record.start_datetime,
+            end_datetime=record.end_datetime,
+            duration_seconds=record.duration_seconds,
+            zone_offset=record.zone_offset,
+            provider=str(data_source.provider),
+            device=data_source.device_model,
+        )
+
+    @staticmethod
     def _emit_event_record_webhook(
-        record: EventRecord,
-        data_source: DataSource,
+        snapshot: _RecordSnapshot,
         detail: EventRecordDetailCreate,
     ) -> None:
         """Fire the appropriate outgoing webhook for a newly created event record."""
         if not svix_service.is_enabled():
             return
-        category = (record.category or "").lower()
-        provider = str(data_source.provider)
-        device = data_source.device_model
-        zone_offset = record.zone_offset
-        if category == "sleep":
+        if snapshot.category == "sleep":
             eff = detail.sleep_efficiency_score
             has_stages = any(
                 [
@@ -417,14 +455,14 @@ class EventRecordService(
                 ]
             )
             on_sleep_created(
-                record_id=record.id,
-                user_id=data_source.user_id,
-                provider=provider,
-                device=device,
-                start_time=record.start_datetime.isoformat(),
-                end_time=record.end_datetime.isoformat(),
-                zone_offset=zone_offset,
-                duration_seconds=record.duration_seconds,
+                record_id=snapshot.record_id,
+                user_id=snapshot.user_id,
+                provider=snapshot.provider,
+                device=snapshot.device,
+                start_time=snapshot.start_datetime.isoformat(),
+                end_time=snapshot.end_datetime.isoformat(),
+                zone_offset=snapshot.zone_offset,
+                duration_seconds=snapshot.duration_seconds,
                 efficiency_percent=float(eff) if eff is not None else None,
                 stages={
                     "awake_minutes": detail.sleep_awake_minutes,
@@ -436,20 +474,20 @@ class EventRecordService(
                 else None,
                 is_nap=detail.is_nap,
             )
-        elif category == "workout":
+        elif snapshot.category == "workout":
             avg_pace: int | None = None
             if detail.average_speed and float(detail.average_speed) > 0:
                 avg_pace = int(1000 / float(detail.average_speed))
             on_workout_created(
-                record_id=record.id,
-                user_id=data_source.user_id,
-                provider=provider,
-                device=device,
-                workout_type=record.type,
-                start_time=record.start_datetime.isoformat(),
-                end_time=record.end_datetime.isoformat(),
-                zone_offset=zone_offset,
-                duration_seconds=record.duration_seconds,
+                record_id=snapshot.record_id,
+                user_id=snapshot.user_id,
+                provider=snapshot.provider,
+                device=snapshot.device,
+                workout_type=snapshot.record_type,
+                start_time=snapshot.start_datetime.isoformat(),
+                end_time=snapshot.end_datetime.isoformat(),
+                zone_offset=snapshot.zone_offset,
+                duration_seconds=snapshot.duration_seconds,
                 calories_kcal=float(detail.energy_burned) if detail.energy_burned is not None else None,
                 distance_meters=float(detail.distance) if detail.distance is not None else None,
                 avg_heart_rate_bpm=int(detail.heart_rate_avg) if detail.heart_rate_avg is not None else None,
@@ -495,7 +533,7 @@ class EventRecordService(
         )
         data_sources_by_id = {ds.id: ds for ds in data_sources}
 
-        dispatches: list[tuple[EventRecord, DataSource, EventRecordDetailCreate]] = []
+        dispatches: list[tuple[_RecordSnapshot, EventRecordDetailCreate]] = []
         for detail in details:
             record = records_by_id.get(detail.record_id)
             if record is None or record.data_source_id is None:
@@ -503,15 +541,15 @@ class EventRecordService(
             data_source = data_sources_by_id.get(record.data_source_id)
             if data_source is None:
                 continue
-            dispatches.append((record, data_source, detail))
+            dispatches.append((self._snapshot_record(record, data_source), detail))
 
         if not dispatches:
             return
 
         @sa_event.listens_for(db_session, "after_commit", once=True)
         def _dispatch_bulk_webhooks(session: DbSession) -> None:  # noqa: ARG001
-            for record, data_source, detail in dispatches:
-                self._emit_event_record_webhook(record, data_source, detail)
+            for snapshot, detail in dispatches:
+                self._emit_event_record_webhook(snapshot, detail)
 
     @handle_exceptions
     def _get_records_with_filters(

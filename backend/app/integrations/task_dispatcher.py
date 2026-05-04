@@ -29,6 +29,7 @@ class TaskDispatchBackend(str, Enum):
 
 class RegisteredTask(str, Enum):
     CHECK_GARMIN_TRIGGERED_TIMEOUT = "check_garmin_triggered_timeout"
+    EMIT_WEBHOOK_EVENT = "emit_webhook_event"
     FINALIZE_STALE_SLEEPS = "finalize_stale_sleeps"
     GC_STUCK_BACKFILLS = "gc_stuck_backfills"
     PROCESS_AWS_UPLOAD = "process_aws_upload"
@@ -65,6 +66,10 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         task_name="app.integrations.celery.tasks.garmin.backfill_timeout.check_triggered_timeout",
         callable_path="app.integrations.celery.tasks.garmin.backfill_timeout.check_triggered_timeout",
         cloud_tasks_queue="garmin_backfill",
+    ),
+    RegisteredTask.EMIT_WEBHOOK_EVENT: TaskDefinition(
+        task_name="app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event",
+        callable_path="app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event",
     ),
     RegisteredTask.FINALIZE_STALE_SLEEPS: TaskDefinition(
         task_name="app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps",

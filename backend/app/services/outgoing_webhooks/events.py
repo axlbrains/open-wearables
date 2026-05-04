@@ -41,16 +41,21 @@ def _dispatch(
     channels: list[str] | None = None,
     idempotency_key: str | None = None,
 ) -> None:
-    """Schedule the Celery emit task.
+    """Schedule the outgoing webhook delivery task.
 
-    Import is deferred to avoid circular dependencies. Silently drops the
-    event when the broker (Redis) is unreachable so that data ingestion is
-    never blocked by webhook infrastructure.
+    Routes through ``dispatch_task`` so the work runs on the configured
+    backend (Cloud Tasks in prod, Celery in local dev).  Import is deferred
+    to avoid circular dependencies.  Failures here are swallowed so that
+    data ingestion is never blocked by webhook infrastructure.
     """
     try:
-        from app.integrations.celery.tasks.emit_webhook_event_task import emit_webhook_event
+        from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 
-        emit_webhook_event.delay(event_type, payload, channels=channels, idempotency_key=idempotency_key)
+        dispatch_task(
+            RegisteredTask.EMIT_WEBHOOK_EVENT,
+            args=[event_type, payload],
+            kwargs={"channels": channels, "idempotency_key": idempotency_key},
+        )
     except Exception:
         logger.warning("Could not enqueue webhook event %s", event_type, exc_info=True)
 

@@ -215,14 +215,15 @@ def mock_svix_lifespan() -> Generator[MagicMock, None, None]:
 
 @pytest.fixture(autouse=True)
 def mock_webhook_dispatch() -> Generator[MagicMock, None, None]:
-    """Prevent outgoing webhook tasks from attempting real Redis/Celery connections.
+    """Prevent outgoing webhook tasks from attempting real backend connections.
 
-    Patches the Celery task's delay so tests that don't care about webhook
-    emission never hang on a missing broker.  Tests that DO verify dispatch
-    behaviour override this via their own @patch decorator (innermost wins).
+    Patches ``dispatch_task`` so tests that don't care about webhook emission
+    never hang trying to reach Redis/Cloud Tasks.  Tests that DO verify
+    dispatch behaviour override this via their own @patch decorator
+    (innermost wins).
     """
-    with patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event") as mock:
-        mock.delay.return_value = None
+    with patch("app.integrations.task_dispatcher.dispatch_task") as mock:
+        mock.return_value = None
         yield mock
 
 
