@@ -453,7 +453,6 @@ class Oura247Data(Base247DataTemplate):
         recovery_metrics, health_scores = normalized
 
         metrics = [
-            ("recovery_score", SeriesType.recovery_score),
             ("temperature_deviation", SeriesType.skin_temperature_deviation),
             ("temperature_trend_deviation", SeriesType.skin_temperature_trend_deviation),
         ]
@@ -508,22 +507,36 @@ class Oura247Data(Base247DataTemplate):
     ) -> list[dict[str, Any]]:
         """Fetch sleep data from Oura API.
 
-        Pads ``end_date`` by one day before serialization.  Oura's
-        ``/v2/usercollection/sleep`` filters by the sleep session's
-        ``day`` field strictly enough that a narrow same-day or
-        single-day request returns ``[]`` even when a sleep session with
-        that ``day`` exists in their database — the requested window
-        appears to need to span at least two days *around* the target
-        ``day`` for that day's sessions to be returned.
+        Pads the ``[start_date, end_date]`` window by one day on each
+        side before serialization.  Oura's ``/v2/usercollection/sleep``
+        filters sessions by their ``day`` field with
+        ``start_date < day <= end_date`` semantics — the start is
+        exclusive — so a narrow request whose ``start_date`` falls on
+        the same calendar day as the target session returns ``[]``
+        even though that session exists in their database.
+
+        Empirically (verified against a live Oura account whose
+        ``day=2026-05-06`` session was visible in the dashboard):
+
+        ===============================  ==============
+        ``?start_date=…&end_date=…``     items returned
+        ===============================  ==============
+        ``05-06`` … ``05-06``            0
+        ``05-06`` … ``05-07``            0
+        ``05-06`` … ``05-08``            0
+        ``05-05`` … ``05-06``            1  ← day=05-06
+        ``05-05`` … ``05-07``            1
+        ``05-04`` … ``05-07``            2
+        ===============================  ==============
 
         Without padding, live periodic syncs (where the natural
-        ``[start, end]`` window collapses to a few minutes within the
-        same calendar day after the first cycle) silently never reach
-        today's sleep.  ``save_sleep_data`` is idempotent on
-        ``external_id`` so over-fetching at the boundary is safe.
+        ``[start, end]`` window collapses to minutes inside the same
+        calendar day after the first cycle) silently miss today's
+        sleep.  ``save_sleep_data`` is idempotent on ``external_id``
+        so the over-fetch at both boundaries is safe.
         """
         params = {
-            "start_date": start_time.strftime("%Y-%m-%d"),
+            "start_date": (start_time - timedelta(days=1)).strftime("%Y-%m-%d"),
             "end_date": (end_time + timedelta(days=1)).strftime("%Y-%m-%d"),
         }
         return self._paginate(db, user_id, "/v2/usercollection/sleep", params)
