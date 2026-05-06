@@ -506,10 +506,25 @@ class Oura247Data(Base247DataTemplate):
         start_time: datetime,
         end_time: datetime,
     ) -> list[dict[str, Any]]:
-        """Fetch sleep data from Oura API."""
+        """Fetch sleep data from Oura API.
+
+        Pads ``end_date`` by one day before serialization.  Oura's
+        ``/v2/usercollection/sleep`` filters by the sleep session's
+        ``day`` field strictly enough that a narrow same-day or
+        single-day request returns ``[]`` even when a sleep session with
+        that ``day`` exists in their database — the requested window
+        appears to need to span at least two days *around* the target
+        ``day`` for that day's sessions to be returned.
+
+        Without padding, live periodic syncs (where the natural
+        ``[start, end]`` window collapses to a few minutes within the
+        same calendar day after the first cycle) silently never reach
+        today's sleep.  ``save_sleep_data`` is idempotent on
+        ``external_id`` so over-fetching at the boundary is safe.
+        """
         params = {
             "start_date": start_time.strftime("%Y-%m-%d"),
-            "end_date": end_time.strftime("%Y-%m-%d"),
+            "end_date": (end_time + timedelta(days=1)).strftime("%Y-%m-%d"),
         }
         return self._paginate(db, user_id, "/v2/usercollection/sleep", params)
 
