@@ -97,6 +97,18 @@ variable "create_cloud_sql" {
   default     = true
 }
 
+variable "cloud_sql_tier" {
+  description = "Cloud SQL machine type for the OW DB."
+  type        = string
+  default     = "db-f1-micro"
+}
+
+variable "cloud_sql_disk_size_gb" {
+  description = "Cloud SQL disk size in GB for the OW DB."
+  type        = number
+  default     = 10
+}
+
 variable "create_vpc_connector" {
   description = "Whether to create a VPC access connector."
   type        = bool
