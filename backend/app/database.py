@@ -27,15 +27,39 @@ from app.schemas.enums import AggregationMethod, HealthScoreCategory, ProviderNa
 from app.schemas.model_crud.user_management import InvitationStatus
 from app.utils.mappings_meta import AutoRelMeta
 
+# Per-Cloud-Run-instance pool sizing.
+#
+# Cloud SQL Postgres has a hard ``max_connections`` cap (25 on
+# ``db-f1-micro``, ~100 on ``db-custom-1-3840``).  Each Cloud Run
+# instance opens its own pool, and we run **two** engines (sync +
+# async) per instance, so the per-instance budget is roughly:
+#     (pool_size + max_overflow) * 2
+# Keeping that small leaves headroom for autoscale bursts and Cloud
+# Tasks fan-out without tripping the connection limit.
+#
+# pool_size=2, max_overflow=3 ⇒ ≤ 5 conns per engine ⇒ ≤ 10 per
+# instance.  On a 100-conn DB that's ~10 warm Cloud Run instances of
+# headroom before we hit the ceiling, well above current scale.
+#
+# pool_recycle=300s (5 min) drops idle connections aggressively so
+# instances that briefly scaled up don't sit on slots they're not
+# actively using.
 engine = create_engine(
     settings.db_uri,
     pool_pre_ping=True,
-    pool_size=20,
-    max_overflow=30,
+    pool_size=2,
+    max_overflow=3,
     pool_timeout=30,
-    pool_recycle=3600,
+    pool_recycle=300,
 )
-async_engine = create_async_engine(settings.db_uri)
+async_engine = create_async_engine(
+    settings.db_uri,
+    pool_pre_ping=True,
+    pool_size=2,
+    max_overflow=3,
+    pool_timeout=30,
+    pool_recycle=300,
+)
 
 
 def _prepare_sessionmaker(engine: Engine) -> sessionmaker:
