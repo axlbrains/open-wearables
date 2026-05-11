@@ -14,6 +14,7 @@ from uuid import UUID
 
 from app.constants.webhooks.events import SERIES_TYPE_TO_GRANULAR_EVENT, SERIES_TYPE_TO_GROUP_EVENT
 from app.schemas.webhooks.event_types import WebhookEventType
+from app.services.outgoing_webhooks import svix as svix_service
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,12 @@ def _dispatch(
 
     Routes through ``dispatch_task`` so the work runs on the configured
     backend (Cloud Tasks in prod, Celery in local dev).  Import is deferred
-    to avoid circular dependencies.  Failures here are swallowed so that
-    data ingestion is never blocked by webhook infrastructure.
+    to avoid circular dependencies.  Silently drops the event when Svix is
+    not configured, and swallows broker errors so that data ingestion is
+    never blocked by webhook infrastructure.
     """
+    if not svix_service.is_enabled():
+        return
     try:
         from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 
@@ -242,5 +246,92 @@ def on_connection_created(
             },
         },
         idempotency_key=f"connection.created.{user_id}.{provider}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_sync_started(
+    *,
+    user_id: UUID,
+    provider: str,
+    source: str,
+    run_id: str,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    _dispatch(
+        WebhookEventType.SYNC_STARTED,
+        {
+            "type": WebhookEventType.SYNC_STARTED,
+            "data": {
+                "user_id": str(user_id),
+                "provider": provider,
+                "source": source,
+                "run_id": run_id,
+                "message": message,
+                "metadata": metadata or {},
+            },
+        },
+        idempotency_key=f"sync.started.{run_id}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_sync_completed(
+    *,
+    user_id: UUID,
+    provider: str,
+    source: str,
+    run_id: str,
+    status: str,
+    message: str | None = None,
+    items_processed: int | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    _dispatch(
+        WebhookEventType.SYNC_COMPLETED,
+        {
+            "type": WebhookEventType.SYNC_COMPLETED,
+            "data": {
+                "user_id": str(user_id),
+                "provider": provider,
+                "source": source,
+                "run_id": run_id,
+                "status": status,
+                "message": message,
+                "items_processed": items_processed,
+                "metadata": metadata or {},
+            },
+        },
+        idempotency_key=f"sync.completed.{run_id}",
+        channels=[f"user.{user_id}"],
+    )
+
+
+def on_sync_failed(
+    *,
+    user_id: UUID,
+    provider: str,
+    source: str,
+    run_id: str,
+    error: str,
+    message: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    _dispatch(
+        WebhookEventType.SYNC_FAILED,
+        {
+            "type": WebhookEventType.SYNC_FAILED,
+            "data": {
+                "user_id": str(user_id),
+                "provider": provider,
+                "source": source,
+                "run_id": run_id,
+                "error": error,
+                "message": message,
+                "metadata": metadata or {},
+            },
+        },
+        idempotency_key=f"sync.failed.{run_id}",
         channels=[f"user.{user_id}"],
     )
