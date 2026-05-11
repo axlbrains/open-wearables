@@ -29,17 +29,19 @@ from app.utils.mappings_meta import AutoRelMeta
 
 # Per-Cloud-Run-instance pool sizing.
 #
-# Cloud SQL Postgres has a hard ``max_connections`` cap (25 on
-# ``db-f1-micro``, ~100 on ``db-custom-1-3840``).  Each Cloud Run
-# instance opens its own pool, and we run **two** engines (sync +
-# async) per instance, so the per-instance budget is roughly:
+# Cloud SQL Postgres has a hard ``max_connections`` cap (~100 on
+# ``db-custom-1-3840``).  Each Cloud Run instance opens its own pool,
+# and we run **two** engines (sync + async) per instance, so the
+# per-instance budget is roughly:
 #     (pool_size + max_overflow) * 2
-# Keeping that small leaves headroom for autoscale bursts and Cloud
-# Tasks fan-out without tripping the connection limit.
+# Long-lived endpoints (sync-status SSE) plus new periodic tasks
+# (provider webhook registration, Oura renewal) need more headroom
+# than the original db-f1-micro era 2+3 pool — that was sized for a
+# 25-conn DB.
 #
-# pool_size=2, max_overflow=3 ⇒ ≤ 5 conns per engine ⇒ ≤ 10 per
-# instance.  On a 100-conn DB that's ~10 warm Cloud Run instances of
-# headroom before we hit the ceiling, well above current scale.
+# pool_size=5, max_overflow=10 ⇒ ≤ 15 conns per engine ⇒ ≤ 30 per
+# instance.  At 100-conn DB that's ~3 warm Cloud Run instances of
+# safe headroom, which fits our autoscale ceiling.
 #
 # pool_recycle=300s (5 min) drops idle connections aggressively so
 # instances that briefly scaled up don't sit on slots they're not
@@ -47,16 +49,16 @@ from app.utils.mappings_meta import AutoRelMeta
 engine = create_engine(
     settings.db_uri,
     pool_pre_ping=True,
-    pool_size=2,
-    max_overflow=3,
+    pool_size=5,
+    max_overflow=10,
     pool_timeout=30,
     pool_recycle=300,
 )
 async_engine = create_async_engine(
     settings.db_uri,
     pool_pre_ping=True,
-    pool_size=2,
-    max_overflow=3,
+    pool_size=5,
+    max_overflow=10,
     pool_timeout=30,
     pool_recycle=300,
 )
