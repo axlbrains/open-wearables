@@ -22,6 +22,8 @@ from functools import wraps
 from logging import getLogger
 from typing import Any, Callable
 
+import redis.exceptions
+
 from app.integrations.redis_client import get_redis_client
 
 logger = getLogger(__name__)
@@ -39,6 +41,14 @@ def idempotent(
             decorator prefixes it with ``idem:`` so callers don't have to.
         ttl_seconds: Lifetime of the lock. Aim for ~p99 of the handler's
             real runtime; defaults to 1h.
+
+    Behaviour when Redis is unreachable
+    ----------------------------------
+    Fail open: log the error and run the handler without dedup.  Cloud
+    Tasks delivers at-least-once anyway, so duplicate execution under
+    Redis outage is no worse than the baseline guarantee — and far better
+    than 500-ing every retry, which is what happens if we let the
+    connection error propagate.
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -53,7 +63,16 @@ def idempotent(
                 )
                 return func(*args, **kwargs)
 
-            acquired = get_redis_client().set(lock_key, "1", nx=True, ex=ttl_seconds)
+            try:
+                acquired = get_redis_client().set(lock_key, "1", nx=True, ex=ttl_seconds)
+            except (redis.exceptions.RedisError, OSError) as exc:
+                logger.warning(
+                    "Idempotency Redis unreachable; running %s without dedup: %s",
+                    func.__name__,
+                    exc,
+                )
+                return func(*args, **kwargs)
+
             if not acquired:
                 logger.info(
                     "Task deduplicated by idempotency lock",
