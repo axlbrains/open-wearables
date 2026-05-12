@@ -40,6 +40,24 @@ frontend_image = "europe-west1-docker.pkg.dev/your-prod-project-id/open-wearable
 
 worker_service_base_url = "https://worker.example.run.app"
 
+# Cloud Run container commands.
+#
+# For ``api`` and ``worker`` we run the FastAPI server module directly
+# rather than wrapping in a ``scripts/start/cloud-run-api.sh`` bash
+# script — one fewer process layer to debug at startup, and no
+# dependency on the script being present in the image (a transient
+# ``gcloud builds submit`` tar race silently dropped the two
+# ``cloud-run-*.sh`` files on a 2026-05-12 build; the direct command
+# is immune).  Worker uses the same direct form, so api/worker stay
+# symmetric.
+#
+# The init job is genuinely multi-step (alembic + provider settings +
+# device priorities + admin + series-type seeds) so it keeps the bash
+# wrapper.
+backend_api_command    = ["/opt/venv/bin/python", "-m", "fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
+backend_worker_command = ["/opt/venv/bin/python", "-m", "fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
+backend_init_command   = ["/bin/bash", "scripts/start/cloud-run-init.sh"]
+
 backend_api_env = {
   ENVIRONMENT  = "production"
   CORS_ORIGINS = "https://frontend.example.com"
