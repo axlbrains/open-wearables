@@ -4,8 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 from uuid import UUID
 
-from celery import current_app as celery_app
-
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.models import EventRecord, User
 from app.repositories.event_record_repository import EventRecordRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
@@ -145,8 +144,8 @@ class BaseProviderStrategy(ABC):
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
 
-        task = celery_app.send_task(
-            "app.integrations.celery.tasks.sync_vendor_data_task.sync_vendor_data",
+        handle = dispatch_task(
+            RegisteredTask.SYNC_VENDOR_DATA,
             kwargs={
                 "user_id": str(user_id),
                 "start_date": start_date.isoformat(),
@@ -157,7 +156,7 @@ class BaseProviderStrategy(ABC):
         )
 
         return HistoricalSyncResult(
-            task_id=task.id,
+            task_id=handle.id or "",
             method="pull_api",
             message=f"Historical sync queued for {days} days of {self.name} data.",
             days=days,

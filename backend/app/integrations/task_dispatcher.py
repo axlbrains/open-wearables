@@ -35,6 +35,7 @@ class RegisteredTask(str, Enum):
     PROCESS_AWS_UPLOAD = "process_aws_upload"
     PROCESS_SDK_UPLOAD = "process_sdk_upload"
     PROCESS_SDK_UPLOAD_REFERENCE = "process_sdk_upload_reference"
+    PROCESS_WEBHOOK_PUSH = "process_webhook_push"
     PROCESS_XML_UPLOAD = "process_xml_upload"
     PROCESS_XML_UPLOAD_REFERENCE = "process_xml_upload_reference"
     SEND_INVITATION_EMAIL = "send_invitation_email"
@@ -95,6 +96,11 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         callable_path="app.integrations.celery.tasks.process_sdk_upload_reference_task.process_sdk_upload_reference",
         celery_queue="sdk_sync",
         cloud_tasks_queue="sdk_sync",
+    ),
+    RegisteredTask.PROCESS_WEBHOOK_PUSH: TaskDefinition(
+        task_name="app.integrations.celery.tasks.webhook_push_task.process_webhook_push",
+        callable_path="app.integrations.celery.tasks.webhook_push_task.process_webhook_push",
+        celery_queue="webhook_sync",
     ),
     RegisteredTask.PROCESS_XML_UPLOAD: TaskDefinition(
         task_name="app.integrations.celery.tasks.process_xml_upload_task.process_xml_upload",

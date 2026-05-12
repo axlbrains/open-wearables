@@ -19,11 +19,11 @@ import logging
 from typing import Any
 from uuid import uuid4
 
-from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 
 from app.config import settings
 from app.database import DbSession
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories import UserConnectionRepository
 from app.services.providers.suunto.data_247 import Suunto247Data
 from app.services.providers.suunto.workouts import SuuntoWorkouts
@@ -40,8 +40,6 @@ SUPPORTED_EVENT_TYPES: list[str] = [
     "SUUNTO_247_SLEEP_CREATED",
     "SUUNTO_247_RECOVERY_CREATED",
 ]
-
-_PROCESS_PUSH_TASK = "app.integrations.celery.tasks.webhook_push_task.process_webhook_push"
 
 
 class SuuntoWebhookHandler(BaseWebhookHandler):
@@ -115,8 +113,9 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
 
         store_raw_payload(source="webhook", provider="suunto", payload=payload, trace_id=request_trace_id)
 
-        task = celery_app.send_task(
-            _PROCESS_PUSH_TASK, args=["suunto", payload, request_trace_id], queue="webhook_sync"
+        handle = dispatch_task(
+            RegisteredTask.PROCESS_WEBHOOK_PUSH,
+            args=["suunto", payload, request_trace_id],
         )
         log_structured(
             logger,
@@ -124,7 +123,7 @@ class SuuntoWebhookHandler(BaseWebhookHandler):
             "Enqueued Suunto webhook processing task",
             provider="suunto",
             trace_id=request_trace_id,
-            task_id=getattr(task, "id", None),
+            task_id=handle.id,
         )
 
         return {"status": "accepted"}

@@ -32,12 +32,12 @@ import time
 from typing import Any
 from uuid import UUID, uuid4
 
-from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
 from app.config import settings
 from app.database import DbSession
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories import UserConnectionRepository
 from app.schemas.providers.whoop import WhoopWebhookNotification, WhoopWebhookNotificationType
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
@@ -47,8 +47,6 @@ from app.services.raw_payload_storage import store_raw_payload
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
-
-_PROCESS_PUSH_TASK = "app.integrations.celery.tasks.webhook_push_task.process_webhook_push"
 
 
 class WhoopWebhookHandler(BaseWebhookHandler):
@@ -145,14 +143,17 @@ class WhoopWebhookHandler(BaseWebhookHandler):
 
         store_raw_payload(source="webhook", provider="whoop", payload=payload, trace_id=request_trace_id)
 
-        task = celery_app.send_task(_PROCESS_PUSH_TASK, args=["whoop", payload, request_trace_id], queue="webhook_sync")
+        handle = dispatch_task(
+            RegisteredTask.PROCESS_WEBHOOK_PUSH,
+            args=["whoop", payload, request_trace_id],
+        )
         log_structured(
             logger,
             "info",
             "Enqueued Whoop webhook processing task",
             provider="whoop",
             trace_id=request_trace_id,
-            task_id=getattr(task, "id", None),
+            task_id=handle.id,
         )
 
         return {"status": "accepted"}

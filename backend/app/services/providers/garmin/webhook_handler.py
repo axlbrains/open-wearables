@@ -15,10 +15,10 @@ import logging
 from typing import Any
 from uuid import UUID, uuid4
 
-from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 
 from app.database import DbSession
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories import UserConnectionRepository
 from app.services.providers.garmin.backfill_state import (
     get_backfill_status,
@@ -56,10 +56,6 @@ WELLNESS_TYPES: list[str] = [
     "bloodPressures",
     "activityDetails",
 ]
-
-# Celery task paths — used with send_task() to avoid circular imports
-_TRIGGER_NEXT_TASK = "app.integrations.celery.tasks.garmin.backfill_task.trigger_next_pending_type"
-_PROCESS_PUSH_TASK = "app.integrations.celery.tasks.webhook_push_task.process_webhook_push"
 
 
 class GarminWebhookHandler(BaseWebhookHandler):
@@ -130,16 +126,20 @@ class GarminWebhookHandler(BaseWebhookHandler):
 
         store_raw_payload(source="webhook", provider="garmin", payload=payload, trace_id=request_trace_id)
 
-        # garmin_sync is isolated from the default queue so high-volume live-push
-        # events and backfill-chain tasks don't starve each other.
-        task = celery_app.send_task(_PROCESS_PUSH_TASK, args=["garmin", payload, request_trace_id], queue="garmin_sync")
+        # garmin_sync is isolated from the default queue (via TaskDefinition.celery_queue
+        # in app/integrations/task_dispatcher.py) so high-volume live-push events
+        # and backfill-chain tasks don't starve each other.
+        handle = dispatch_task(
+            RegisteredTask.PROCESS_WEBHOOK_PUSH,
+            args=["garmin", payload, request_trace_id],
+        )
         log_structured(
             logger,
             "info",
             "Enqueued Garmin webhook processing task",
             provider="garmin",
             trace_id=request_trace_id,
-            task_id=getattr(task, "id", None),
+            task_id=handle.id,
         )
 
         return {"status": "accepted"}
@@ -313,7 +313,10 @@ class GarminWebhookHandler(BaseWebhookHandler):
                     current_window=backfill_status["current_window"],
                     total_windows=backfill_status["total_windows"],
                 )
-                celery_app.send_task(_TRIGGER_NEXT_TASK, args=[user_id_str])
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                    args=[user_id_str],
+                )
                 backfill_triggered.append(user_id_str)
         return backfill_triggered
 

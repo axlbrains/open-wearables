@@ -33,12 +33,12 @@ import logging
 from typing import Any
 from uuid import UUID, uuid4
 
-from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 from pydantic import ValidationError
 
 from app.config import settings
 from app.database import DbSession
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories import UserConnectionRepository
 from app.schemas.providers.oura import OuraWebhookNotification
 from app.services.providers.oura.data_247 import Oura247Data
@@ -48,8 +48,6 @@ from app.services.raw_payload_storage import store_raw_payload
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
-
-_PROCESS_PUSH_TASK = "app.integrations.celery.tasks.webhook_push_task.process_webhook_push"
 
 SUPPORTED_DATA_TYPES = [
     "workout",
@@ -144,14 +142,17 @@ class OuraWebhookHandler(BaseWebhookHandler):
 
         store_raw_payload(source="webhook", provider="oura", payload=payload, trace_id=request_trace_id)
 
-        task = celery_app.send_task(_PROCESS_PUSH_TASK, args=["oura", payload, request_trace_id], queue="webhook_sync")
+        handle = dispatch_task(
+            RegisteredTask.PROCESS_WEBHOOK_PUSH,
+            args=["oura", payload, request_trace_id],
+        )
         log_structured(
             logger,
             "info",
             "Enqueued Oura webhook processing task",
             provider="oura",
             trace_id=request_trace_id,
-            task_id=getattr(task, "id", None),
+            task_id=handle.id,
         )
 
         return {"status": "accepted"}
