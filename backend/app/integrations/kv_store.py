@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Iterator
 from uuid import uuid4
 
-from sqlalchemy import bindparam, text
+from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
 logger = logging.getLogger(__name__)
@@ -59,10 +59,11 @@ def _expires_at(ex: int | None) -> datetime | None:
 class _Pipeline:
     """Best-effort pipeline.  Queues commands and replays them on ``execute()``.
 
-    Real Redis pipelines guarantee command-stream atomicity (with
-    ``transaction=True``).  We loosely emulate that by running every queued
-    command in a single SQLAlchemy transaction.  Pure no-op fallthrough for
-    ``publish``.
+    Mirrors Redis ``pipeline(transaction=False)`` semantics: each queued
+    command runs independently — a failure on one doesn't cascade and
+    abort the rest.  We log the exception and move on.  Real Redis with
+    ``transaction=True`` would wrap MULTI/EXEC; we don't bother since none
+    of our call sites pass it.
     """
 
     def __init__(self, client: "KvStoreClient") -> None:
@@ -78,15 +79,17 @@ class _Pipeline:
 
     def execute(self) -> list[Any]:
         results: list[Any] = []
-        with self._client._engine.begin() as conn:  # noqa: SLF001 - controlled access
-            for name, args, kwargs in self._ops:
-                method = getattr(self._client, name, None)
-                if method is None:
-                    logger.warning("kv_store pipeline: unknown op %r — skipping", name)
-                    results.append(None)
-                    continue
-                # Re-bind to our connection for transactional consistency.
-                results.append(self._client._call_with_conn(conn, name, args, kwargs))  # noqa: SLF001
+        for name, args, kwargs in self._ops:
+            method = getattr(self._client, name, None)
+            if method is None:
+                logger.warning("kv_store pipeline: unknown op %r — skipping", name)
+                results.append(None)
+                continue
+            try:
+                results.append(method(*args, **kwargs))
+            except Exception as exc:
+                logger.warning("kv_store pipeline op %r failed: %s", name, exc, exc_info=True)
+                results.append(exc)
         self._ops.clear()
         return results
 
@@ -199,8 +202,9 @@ class KvStoreClient:
             rows = conn.execute(
                 text(
                     "SELECT key, value FROM kv_entry "
-                    "WHERE key = ANY(:keys) AND (expires_at IS NULL OR expires_at > now())"
-                ).bindparams(bindparam("keys", expanding=False)),
+                    "WHERE key = ANY(CAST(:keys AS text[])) "
+                    "AND (expires_at IS NULL OR expires_at > now())"
+                ),
                 {"keys": keys_list},
             ).fetchall()
         by_key = {r[0]: r[1] for r in rows}
@@ -281,13 +285,19 @@ class KvStoreClient:
             return 0
         with self._engine.begin() as conn:
             res = conn.execute(
-                text("DELETE FROM kv_entry WHERE key = ANY(:keys)"),
+                text("DELETE FROM kv_entry WHERE key = ANY(CAST(:keys AS text[]))"),
                 {"keys": keys_list},
             )
             # Also clean up any same-named sets/lists.  Redis DEL is type-aware
             # — calling it for a list deletes the list entirely; we mirror.
-            conn.execute(text("DELETE FROM kv_set_member WHERE set_key = ANY(:keys)"), {"keys": keys_list})
-            conn.execute(text("DELETE FROM kv_list_entry WHERE list_key = ANY(:keys)"), {"keys": keys_list})
+            conn.execute(
+                text("DELETE FROM kv_set_member WHERE set_key = ANY(CAST(:keys AS text[]))"),
+                {"keys": keys_list},
+            )
+            conn.execute(
+                text("DELETE FROM kv_list_entry WHERE list_key = ANY(CAST(:keys AS text[]))"),
+                {"keys": keys_list},
+            )
         return res.rowcount
 
     # ------------------------------------------------------------------
@@ -301,7 +311,7 @@ class KvStoreClient:
             res = conn.execute(
                 text(
                     "INSERT INTO kv_set_member (set_key, member) "
-                    "SELECT :sk, m FROM unnest(:members) AS m "
+                    "SELECT :sk, m FROM unnest(CAST(:members AS text[])) AS m "
                     "ON CONFLICT (set_key, member) DO NOTHING"
                 ),
                 {"sk": set_key, "members": list(members)},
@@ -324,7 +334,10 @@ class KvStoreClient:
             return 0
         with self._engine.begin() as conn:
             res = conn.execute(
-                text("DELETE FROM kv_set_member WHERE set_key = :sk AND member = ANY(:m)"),
+                text(
+                    "DELETE FROM kv_set_member "
+                    "WHERE set_key = :sk AND member = ANY(CAST(:m AS text[]))"
+                ),
                 {"sk": set_key, "m": list(members)},
             )
         return res.rowcount
