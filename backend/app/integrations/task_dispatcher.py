@@ -44,6 +44,7 @@ class RegisteredTask(str, Enum):
     SYNC_VENDOR_DATA = "sync_vendor_data"
     TRIGGER_GARMIN_BACKFILL_FOR_TYPE = "trigger_garmin_backfill_for_type"
     TRIGGER_GARMIN_NEXT_PENDING_TYPE = "trigger_garmin_next_pending_type"
+    VACUUM_KV_EXPIRED = "vacuum_kv_expired"
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,10 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         task_name="app.integrations.celery.tasks.garmin.backfill_task.trigger_next_pending_type",
         callable_path="app.integrations.celery.tasks.garmin.backfill_task.trigger_next_pending_type",
         cloud_tasks_queue="garmin_backfill",
+    ),
+    RegisteredTask.VACUUM_KV_EXPIRED: TaskDefinition(
+        task_name="app.integrations.celery.tasks.kv_vacuum_task.vacuum_kv_expired",
+        callable_path="app.integrations.celery.tasks.kv_vacuum_task.vacuum_kv_expired",
     ),
 }
 

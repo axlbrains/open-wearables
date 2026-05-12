@@ -22,6 +22,7 @@ from .emit_webhook_event_task import emit_webhook_event
 from .fill_missing_resilience_scores_task import fill_missing_resilience_scores
 from .fill_missing_sleep_scores_task import fill_missing_sleep_scores
 from .finalize_stale_sleep_task import finalize_stale_sleeps
+from .kv_vacuum_task import vacuum_kv_expired
 from .garmin.backfill_task import (
     start_full_backfill as start_garmin_full_backfill,
 )
@@ -81,6 +82,7 @@ __all__ = [
     "process_webhook_push",
     "register_provider_webhooks",
     "renew_oura_webhooks",
+    "vacuum_kv_expired",
     # Outgoing webhooks
     "emit_webhook_event",
 ]
