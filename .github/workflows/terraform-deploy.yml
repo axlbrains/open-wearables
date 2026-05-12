@@ -1,0 +1,106 @@
+name: Terraform deploy (prod)
+
+# Runs `terraform plan` on PR and `terraform apply` on push to the
+# integration branch (and on manual dispatch). Same WIF/SA pattern as
+# `axlbrains/axl-deployment`'s `deploy.yml`: authenticates as
+# `github-terraform@axl-platform-prod.iam.gserviceaccount.com` so all
+# Cloud Run revisions land with that SA as `lastModifier`.
+#
+# Repository secret required (one-time setup by an org owner):
+#   TFVARS_PROD — full contents of
+#                 infra/gcp/terraform/environments/prod/terraform.tfvars
+#                 (kept gitignored on purpose; carries DB password +
+#                  third-party OAuth secrets). Materialized into the
+#                  workspace below before plan.
+
+on:
+  push:
+    branches: [ axl-integration, main ]
+    paths:
+      - 'infra/gcp/terraform/**'
+      - '.github/workflows/terraform-deploy.yml'
+  pull_request:
+    branches: [ axl-integration, main ]
+    paths:
+      - 'infra/gcp/terraform/**'
+      - '.github/workflows/terraform-deploy.yml'
+  workflow_dispatch: { }
+
+concurrency:
+  group: terraform-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: axl-platform-prod
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_PLUGIN_CACHE_DIR: /home/runner/.terraform.d/plugin-cache
+  TF_DIR: infra/gcp/terraform/environments/prod
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  terraform:
+    name: Terraform (environments/prod)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/489210400185/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-terraform@axl-platform-prod.iam.gserviceaccount.com
+          token_format: "access_token"
+          create_credentials_file: true
+          export_environment_variables: true
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_wrapper: false
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: tf-plugin-${{ runner.os }}-v1
+
+      - name: Materialize terraform.tfvars from repo secret
+        env:
+          TFVARS_PROD: ${{ secrets.TFVARS_PROD }}
+        run: |
+          if [ -z "$TFVARS_PROD" ]; then
+            echo "::error::Repository secret TFVARS_PROD is missing. Add it under Settings → Secrets and variables → Actions with the contents of $TF_DIR/terraform.tfvars."
+            exit 1
+          fi
+          printf '%s' "$TFVARS_PROD" > "$TF_DIR/terraform.tfvars"
+
+      - name: Terraform Init
+        run: terraform -chdir=$TF_DIR init -input=false -reconfigure
+
+      - name: Terraform Plan
+        run: terraform -chdir=$TF_DIR plan -out=tfplan -input=false -lock-timeout=60s
+
+      - name: Show Plan
+        if: always()
+        run: terraform -chdir=$TF_DIR show -no-color tfplan | tee ow-prod-plan.txt
+
+      - name: Upload Plan Artifact (PRs only)
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ow-prod-plan
+          path: ow-prod-plan.txt
+
+      - name: Terraform Apply
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: terraform -chdir=$TF_DIR apply -auto-approve tfplan
