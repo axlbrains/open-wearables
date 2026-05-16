@@ -39,28 +39,41 @@ from app.utils.mappings_meta import AutoRelMeta
 # than the original db-f1-micro era 2+3 pool — that was sized for a
 # 25-conn DB.
 #
-# pool_size=5, max_overflow=10 ⇒ ≤ 15 conns per engine ⇒ ≤ 30 per
-# instance.  At 100-conn DB that's ~3 warm Cloud Run instances of
-# safe headroom, which fits our autoscale ceiling.
+# pool_size=5, max_overflow=30 ⇒ ≤ 35 conns per engine ⇒ ≤ 70 per
+# instance.  At 100-conn DB that's headroom for one warm instance to
+# absorb axl-api fan-out bursts (Promise.all × 6 active users × 4
+# endpoints) without serialising on pool waits.  See OW issue #13.
+#
+# pool_timeout=10s replaces the old 30s — endpoints that already
+# perform 4 sequential DB calls used to stack into 30 / 60 / 120s
+# 500s when the pool was hot.  Failing fast keeps the worst case to
+# ~40s and surfaces saturation as a clean error instead of a stall.
 #
 # pool_recycle=300s (5 min) drops idle connections aggressively so
 # instances that briefly scaled up don't sit on slots they're not
 # actively using.
+#
+# statement_timeout=30s is a backstop against runaway queries — pool
+# wait is bounded by pool_timeout, this covers the per-query side.
+_PG_CONNECT_ARGS = {"options": "-c statement_timeout=30000"}
+
 engine = create_engine(
     settings.db_uri,
     pool_pre_ping=True,
     pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
+    max_overflow=30,
+    pool_timeout=10,
     pool_recycle=300,
+    connect_args=_PG_CONNECT_ARGS,
 )
 async_engine = create_async_engine(
     settings.db_uri,
     pool_pre_ping=True,
     pool_size=5,
-    max_overflow=10,
-    pool_timeout=30,
+    max_overflow=30,
+    pool_timeout=10,
     pool_recycle=300,
+    connect_args=_PG_CONNECT_ARGS,
 )
 
 
