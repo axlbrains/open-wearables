@@ -131,7 +131,8 @@ resource "google_cloud_run_v2_service" "backend_api" {
       }
 
       resources {
-        limits = var.backend_api_resource_limits
+        cpu_idle = true
+        limits   = var.backend_api_resource_limits
       }
 
       dynamic "env" {
@@ -228,7 +229,8 @@ resource "google_cloud_run_v2_service" "backend_worker" {
       }
 
       resources {
-        limits = var.backend_worker_resource_limits
+        cpu_idle = true
+        limits   = var.backend_worker_resource_limits
       }
 
       dynamic "env" {
@@ -391,7 +393,8 @@ resource "google_cloud_run_v2_service" "frontend" {
       }
 
       resources {
-        limits = var.frontend_resource_limits
+        cpu_idle = true
+        limits   = var.frontend_resource_limits
       }
 
       dynamic "env" {
