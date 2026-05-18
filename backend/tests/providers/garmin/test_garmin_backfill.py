@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import HTTPException
 
 from app.integrations.celery.tasks.garmin.backfill_trigger import trigger_backfill_for_type
+from app.integrations.task_dispatcher import RegisteredTask
 from app.services.providers.garmin.backfill_config import (
     ALL_DATA_TYPES,
     BACKFILL_CHUNK_DAYS,
@@ -302,6 +303,15 @@ class TestBackfillTaskStopChain:
     BACKFILL_STATE_MODULE = "app.services.providers.garmin.backfill_state"
     USER_ID = "c079cf7e-70b3-4529-a325-401a658f5cba"
 
+    @staticmethod
+    def _next_chain_calls(mock_dispatch: MagicMock) -> list:
+        """All dispatch_task calls that trigger the next type in the chain."""
+        return [
+            call
+            for call in mock_dispatch.call_args_list
+            if call.args and call.args[0] == RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE
+        ]
+
     def _run_task(
         self,
         *,
@@ -346,7 +356,7 @@ class TestBackfillTaskStopChain:
             patch(f"{self.TIMEOUT_MODULE}.persist_window_results"),
             patch(f"{self.TIMEOUT_MODULE}.complete_backfill"),
             patch(f"{self.BACKFILL_STATE_MODULE}.get_pending_types", return_value=["dailies", "activities"]),
-            patch(f"{self.ORCHESTRATOR_MODULE}.trigger_next_pending_type") as mock_next,
+            patch(f"{self.TASK_MODULE}.dispatch_task") as mock_dispatch,
             patch(f"{self.TASK_MODULE}.get_redis_client", return_value=mock_redis),
             patch(f"{self.TASK_MODULE}.UserConnectionRepository") as mock_conn_repo_cls,
         ):
@@ -368,7 +378,7 @@ class TestBackfillTaskStopChain:
             return {
                 "result": result,
                 "mock_mark_failed": shared_mark_failed,
-                "mock_next": mock_next,
+                "mock_dispatch": mock_dispatch,
             }
 
     def _run_task_with_status(self, status_code: int, detail: str) -> dict:
@@ -391,7 +401,7 @@ class TestBackfillTaskStopChain:
         assert "activities" in failed_types
 
         # Should NOT trigger next type
-        ctx["mock_next"].apply_async.assert_not_called()
+        assert self._next_chain_calls(ctx["mock_dispatch"]) == []
 
     def test_401_stops_chain_and_fails_pending_types(self) -> None:
         """401 should stop the chain and mark all pending types as failed."""
@@ -405,7 +415,7 @@ class TestBackfillTaskStopChain:
         assert "dailies" in failed_types
         assert "activities" in failed_types
 
-        ctx["mock_next"].apply_async.assert_not_called()
+        assert self._next_chain_calls(ctx["mock_dispatch"]) == []
 
     def test_403_stops_chain_and_fails_pending_types(self) -> None:
         """403 should stop the chain and mark all pending types as failed."""
@@ -418,7 +428,7 @@ class TestBackfillTaskStopChain:
         assert "dailies" in failed_types
         assert "activities" in failed_types
 
-        ctx["mock_next"].apply_async.assert_not_called()
+        assert self._next_chain_calls(ctx["mock_dispatch"]) == []
 
     def test_400_min_start_time_stops_chain_via_exception(self) -> None:
         """400 'min start time' should stop the chain (HTTPException path)."""
@@ -436,7 +446,7 @@ class TestBackfillTaskStopChain:
         assert "dailies" in failed_types
         assert "activities" in failed_types
 
-        ctx["mock_next"].apply_async.assert_not_called()
+        assert self._next_chain_calls(ctx["mock_dispatch"]) == []
 
     def test_400_min_start_time_stops_chain_via_result(self) -> None:
         """400 'min start time' via result dict should stop the chain (production path)."""
@@ -461,7 +471,7 @@ class TestBackfillTaskStopChain:
         assert "dailies" in failed_types
         assert "activities" in failed_types
 
-        ctx["mock_next"].apply_async.assert_not_called()
+        assert self._next_chain_calls(ctx["mock_dispatch"]) == []
 
     def test_500_does_not_stop_chain(self) -> None:
         """500 should NOT stop the chain — next type should still be triggered."""
@@ -475,4 +485,4 @@ class TestBackfillTaskStopChain:
         assert "dailies" not in failed_types
 
         # Should trigger next type
-        ctx["mock_next"].apply_async.assert_called_once()
+        assert len(self._next_chain_calls(ctx["mock_dispatch"])) == 1
