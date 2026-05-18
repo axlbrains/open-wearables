@@ -49,6 +49,7 @@ def test_dispatch_task_uses_celery_send_task(monkeypatch: pytest.MonkeyPatch) ->
         kwargs={"user_id": "user-123"},
         countdown=None,
         queue="default",
+        task_id=None,
     )
 
 

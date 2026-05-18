@@ -87,6 +87,9 @@ class EventRecordDetailRepository(
         For joined table inheritance, we need to insert into both the base table
         (event_record_detail) and the child table (workout_details/sleep_details).
         """
+        if detail_type not in ("workout", "sleep"):
+            raise ValueError(f"Unknown detail type: {detail_type}")
+
         if not creators:
             return
 

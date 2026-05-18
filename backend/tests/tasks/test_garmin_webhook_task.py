@@ -481,14 +481,14 @@ class TestGarminPushWebhook:
                 f"{HANDLER_MODULE}.get_backfill_status",
                 return_value={"overall_status": "in_progress", "current_window": 1, "total_windows": 5},
             ),
-            patch(f"{HANDLER_MODULE}.celery_app") as mock_celery,
+            patch(f"{HANDLER_MODULE}.dispatch_task") as mock_dispatch,
         ):
-            mock_celery.send_task.return_value = MagicMock(id="backfill-task")
+            mock_dispatch.return_value = MagicMock(id="backfill-task")
             result = process_webhook_push.run("garmin", payload, "trace-015")
 
         # Assert — backfill chaining was triggered
         assert len(result["backfill_chained"]) == 1
-        mock_celery.send_task.assert_called_once()
+        mock_dispatch.assert_called_once()
 
 
 class TestGarminUserPermissionsWebhook:

@@ -529,14 +529,14 @@ class TestFinishSleep:
 class TestHandleSleepDataIntegration:
     """Integration tests for handle_sleep_data with real payload structures."""
 
-    @patch("app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps")
+    @patch("app.services.apple.healthkit.sleep_service.dispatch_task")
     @patch("app.services.apple.healthkit.sleep_service.event_record_service")
     @patch("app.services.apple.healthkit.sleep_service.get_redis_client")
     def test_handle_real_payload_sleeping_stages(
         self,
         mock_redis_func: MagicMock,
         mock_event_service: MagicMock,
-        mock_finalize: MagicMock,
+        mock_dispatch: MagicMock,
         db: Session,
     ) -> None:
         """Process a synthetic payload with in_bed + sleeping stages.
@@ -566,7 +566,9 @@ class TestHandleSleepDataIntegration:
         assert mock_redis.set.called
 
         # The finalize task should be dispatched
-        mock_finalize.delay.assert_called_once()
+        from app.integrations.task_dispatcher import RegisteredTask
+
+        mock_dispatch.assert_called_once_with(RegisteredTask.FINALIZE_STALE_SLEEPS)
 
         # Verify saved state: grab the last set() call's value
         last_set_call = mock_redis.set.call_args_list[-1]
