@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 import pytest
 import redis as redis_lib
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.postgres import PostgresContainer
@@ -191,6 +192,11 @@ def _configure_redis(_redis_url: str) -> Generator[None, None, None]:
     with (
         patch.object(settings, "redis_host", parsed.hostname or "localhost"),
         patch.object(settings, "redis_port", parsed.port or 6379),
+        # Force _redis_configured() in app.integrations.redis_client to short-
+        # circuit to True; otherwise it treats "localhost" as not-configured
+        # and falls through to the Postgres kv_store, which then tries to
+        # resolve docker-compose's "db" host and DNS-fails inside CI.
+        patch.object(settings, "redis_url_override", SecretStr(_redis_url)),
     ):
         yield
 
