@@ -32,12 +32,10 @@ shape that ``app/integrations/redis_client.py`` can return it interchangeably.
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
-from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Iterator
+from typing import Any, Iterable
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -186,10 +184,7 @@ class KvStoreClient:
     def get(self, key: str) -> str | None:
         with self._engine.connect() as conn:
             row = conn.execute(
-                text(
-                    "SELECT value FROM kv_entry "
-                    "WHERE key = :k AND (expires_at IS NULL OR expires_at > now())"
-                ),
+                text("SELECT value FROM kv_entry WHERE key = :k AND (expires_at IS NULL OR expires_at > now())"),
                 {"k": key},
             ).first()
         return row[0] if row else None
@@ -334,10 +329,7 @@ class KvStoreClient:
             return 0
         with self._engine.begin() as conn:
             res = conn.execute(
-                text(
-                    "DELETE FROM kv_set_member "
-                    "WHERE set_key = :sk AND member = ANY(CAST(:m AS text[]))"
-                ),
+                text("DELETE FROM kv_set_member WHERE set_key = :sk AND member = ANY(CAST(:m AS text[]))"),
                 {"sk": set_key, "m": list(members)},
             )
         return res.rowcount

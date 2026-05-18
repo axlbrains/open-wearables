@@ -16,26 +16,6 @@ from app.models import (
     SleepDetails,
     WorkoutDetails,
 )
-
-
-@dataclass(frozen=True)
-class _RecordSnapshot:
-    """Frozen primitives extracted from EventRecord + DataSource.
-
-    Built before SQLAlchemy commits so the after-commit webhook dispatch
-    never touches ORM attributes that have been expired by the commit.
-    """
-
-    record_id: UUID
-    user_id: UUID
-    category: str
-    record_type: str | None
-    start_datetime: datetime
-    end_datetime: datetime
-    duration_seconds: int | None
-    zone_offset: str | None
-    provider: str
-    device: str | None
 from app.repositories import (
     DataPointSeriesRepository,
     DataSourceRepository,
@@ -69,6 +49,26 @@ from app.services.scores.sleep_service import sleep_score_service
 from app.services.services import AppService
 from app.utils.exceptions import handle_exceptions
 from app.utils.pagination import encode_cursor
+
+
+@dataclass(frozen=True)
+class _RecordSnapshot:
+    """Frozen primitives extracted from EventRecord + DataSource.
+
+    Built before SQLAlchemy commits so the after-commit webhook dispatch
+    never touches ORM attributes that have been expired by the commit.
+    """
+
+    record_id: UUID
+    user_id: UUID
+    category: str
+    record_type: str | None
+    start_datetime: datetime
+    end_datetime: datetime
+    duration_seconds: int | None
+    zone_offset: str | None
+    provider: str
+    device: str | None
 
 
 class EventRecordService(

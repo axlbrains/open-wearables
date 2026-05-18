@@ -9,7 +9,7 @@ from app.schemas.model_crud.user_management import UserConnectionCreate, UserCon
 from app.schemas.responses.upload import ConnectionsCoverage, ProviderConnectionCount
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.services import AppService
-from app.utils.exceptions import ResourceNotFoundError, handle_exceptions
+from app.utils.exceptions import handle_exceptions
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
@@ -49,7 +49,12 @@ class UserConnectionService(
     def disconnect(
         self, db_session: DbSession, user_id: UUID, provider: str, oauth: BaseOAuthTemplate | None = None
     ) -> None:
-        """Disconnect a user from a provider. Raises 404 if connection not found.
+        """Disconnect a user from a provider. Idempotent.
+
+        If the connection is missing or already revoked, succeeds silently rather
+        than raising 404 — the client's local state may be stale (e.g. row was
+        cleaned up out-of-band but axl-api still shows the provider as connected),
+        and a successful disconnect lets the user re-authorize cleanly.
 
         If oauth is provided, calls the provider's deregistration API before clearing tokens.
         Deregistration failures are logged but do not block the disconnect.
@@ -60,12 +65,8 @@ class UserConnectionService(
         updated = self.crud.disconnect(db_session, user_id, provider)
         if updated:
             self.logger.info("Revoked connection for user %s from provider %s", user_id, provider)
-            return
-
-        # Nothing updated - check if connection exists (already revoked) or not found
-        connection = self.crud.get_by_user_and_provider(db_session, user_id, provider)
-        if not connection:
-            raise ResourceNotFoundError("connection", user_id)
+        else:
+            self.logger.info("Disconnect no-op for user %s from provider %s (already gone)", user_id, provider)
 
     @handle_exceptions
     def stamp_last_synced_at(self, db_session: DbSession, user_id: UUID, provider: str) -> None:

@@ -22,7 +22,6 @@ from .emit_webhook_event_task import emit_webhook_event
 from .fill_missing_resilience_scores_task import fill_missing_resilience_scores
 from .fill_missing_sleep_scores_task import fill_missing_sleep_scores
 from .finalize_stale_sleep_task import finalize_stale_sleeps
-from .kv_vacuum_task import vacuum_kv_expired
 from .garmin.backfill_task import (
     start_full_backfill as start_garmin_full_backfill,
 )
@@ -36,12 +35,13 @@ from .garmin.backfill_trigger import (
     trigger_backfill_for_type as trigger_garmin_backfill_for_type,
 )
 from .garmin.gc_task import gc_stuck_backfills
+from .kv_vacuum_task import vacuum_kv_expired
 from .periodic_sync_task import sync_all_users
 from .process_aws_upload_task import process_aws_upload
-from .process_sdk_upload_task import process_sdk_upload
 from .process_sdk_upload_reference_task import process_sdk_upload_reference
-from .process_xml_upload_task import process_xml_upload
+from .process_sdk_upload_task import process_sdk_upload
 from .process_xml_upload_reference_task import process_xml_upload_reference
+from .process_xml_upload_task import process_xml_upload
 from .register_provider_webhooks_task import register_provider_webhooks
 from .renew_oura_webhooks_task import renew_oura_webhooks
 from .seed_data_task import generate_seed_data

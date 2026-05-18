@@ -167,9 +167,9 @@ def start_full_backfill(user_id: str) -> dict[str, Any]:
         )
 
         if pending:
-            dispatch_task(RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,args=[user_id, pending[0]], countdown=1)
+            dispatch_task(RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE, args=[user_id, pending[0]], countdown=1)
         else:
-            dispatch_task(RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,args=[user_id], countdown=1)
+            dispatch_task(RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE, args=[user_id], countdown=1)
 
         return {
             "status": "resumed",
@@ -211,7 +211,7 @@ def start_full_backfill(user_id: str) -> dict[str, Any]:
         reset_type_status(user_id, data_type)
 
     first_type = BACKFILL_DATA_TYPES[0]
-    dispatch_task(RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,args=[user_id, first_type], countdown=1)
+    dispatch_task(RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE, args=[user_id, first_type], countdown=1)
 
     return {
         "status": "started",
@@ -275,7 +275,8 @@ def trigger_next_pending_type(user_id: str) -> dict[str, Any]:
                 setup_retry_window(user_id, next_entry["window"])
                 get_redis_client().setex(_get_key(user_id, "retry_current_type"), REDIS_TTL, next_entry["type"])
                 reset_type_status(user_id, next_entry["type"])
-                dispatch_task(RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
                     args=[user_id, next_entry["type"]],
                     countdown=DELAY_BETWEEN_TYPES,
                 )
@@ -338,7 +339,11 @@ def trigger_next_pending_type(user_id: str) -> dict[str, Any]:
                 metadata={"trace_id": trace_id, "window": current_window, "total_windows": total_windows},
             )
             first_type = BACKFILL_DATA_TYPES[0]
-            dispatch_task(RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,args=[user_id, first_type], countdown=DELAY_BETWEEN_TYPES)
+            dispatch_task(
+                RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+                args=[user_id, first_type],
+                countdown=DELAY_BETWEEN_TYPES,
+            )
             return {"status": "advancing_window", "window": current_window}
 
         retry_entries = get_retry_targets(user_id)
@@ -353,7 +358,8 @@ def trigger_next_pending_type(user_id: str) -> dict[str, Any]:
                     first_entry["type"],
                 )
                 reset_type_status(user_id, first_entry["type"])
-                dispatch_task(RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
                     args=[user_id, first_entry["type"]],
                     countdown=DELAY_BETWEEN_TYPES,
                 )
@@ -405,7 +411,11 @@ def trigger_next_pending_type(user_id: str) -> dict[str, Any]:
         remaining=len(pending_types),
     )
 
-    dispatch_task(RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,args=[user_id, next_type], countdown=DELAY_BETWEEN_TYPES)
+    dispatch_task(
+        RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE,
+        args=[user_id, next_type],
+        countdown=DELAY_BETWEEN_TYPES,
+    )
 
     return {"status": "continuing", "next_type": next_type, "pending_count": len(pending_types)}
 
