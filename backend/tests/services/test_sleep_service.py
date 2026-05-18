@@ -643,8 +643,8 @@ class TestSDKSyncEndpointSleep:
         user_id = str(uuid4())
         token = create_sdk_user_token("test_app", user_id)
 
-        with patch("app.api.routes.v1.sdk_sync.process_sdk_upload") as mock_task:
-            mock_task.delay.return_value = None
+        with patch("app.api.routes.v1.sdk_sync.dispatch_task") as mock_dispatch:
+            mock_dispatch.return_value = MagicMock(id="mock-task-id")
 
             response = client.post(
                 "/api/v1/sdk/users/" + user_id + "/sync/",
@@ -655,7 +655,7 @@ class TestSDKSyncEndpointSleep:
         assert response.status_code == 202
         data = response.json()
         assert data["status_code"] == 202
-        mock_task.delay.assert_called_once()
+        mock_dispatch.assert_called_once()
 
     def test_sync_endpoint_accepts_detailed_stages(
         self,
@@ -668,8 +668,8 @@ class TestSDKSyncEndpointSleep:
         user_id = str(uuid4())
         token = create_sdk_user_token("test_app", user_id)
 
-        with patch("app.api.routes.v1.sdk_sync.process_sdk_upload") as mock_task:
-            mock_task.delay.return_value = None
+        with patch("app.api.routes.v1.sdk_sync.dispatch_task") as mock_dispatch:
+            mock_dispatch.return_value = MagicMock(id="mock-task-id")
 
             response = client.post(
                 "/api/v1/sdk/users/" + user_id + "/sync/",

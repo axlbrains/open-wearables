@@ -239,6 +239,27 @@ class KvStoreClient:
     def setex(self, key: str, ttl: int, value: Any) -> bool:
         return self.set(key, value, ex=ttl)
 
+    def ttl(self, key: str) -> int:
+        """Return remaining TTL in seconds.
+
+        Mirrors ``redis.ttl``: ``-2`` if the key is missing, ``-1`` if it has
+        no expiry, otherwise the integer seconds until ``expires_at``.
+        """
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT expires_at FROM kv_entry WHERE key = :k"),
+                {"k": key},
+            ).first()
+        if row is None:
+            return -2
+        expires_at = row[0]
+        if expires_at is None:
+            return -1
+        remaining = (expires_at - datetime.now(timezone.utc)).total_seconds()
+        if remaining <= 0:
+            return -2
+        return int(remaining)
+
     def expire(self, key: str, ttl: int) -> bool:
         exp = _expires_at(ttl)
         with self._engine.begin() as conn:
