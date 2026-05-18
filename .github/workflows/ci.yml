@@ -8,6 +8,7 @@ on:
       - "mcp/**"
       - "backend/**"
       - "frontend/**"
+      - ".github/workflows/ci.yml"
   pull_request:
     paths: *paths
 
@@ -29,10 +30,13 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - '.github/workflows/ci.yml'
             frontend:
               - 'frontend/**'
+              - '.github/workflows/ci.yml'
             mcp:
               - 'mcp/**'
+              - '.github/workflows/ci.yml'
   backend-build:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
