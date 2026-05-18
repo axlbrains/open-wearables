@@ -1,9 +1,9 @@
-from typing import Any
+from typing import Any, cast
 
 from celery import shared_task
 
 from app.integrations.celery.tasks.process_xml_upload_task import process_xml_upload
-from app.services.task_payload_storage import delete_task_payload, load_task_payload
+from app.services.task_payload_storage import TaskPayloadReference, delete_task_payload, load_task_payload
 
 
 @shared_task
@@ -12,12 +12,13 @@ def process_xml_upload_reference(
     filename: str,
     user_id: str,
 ) -> dict[str, Any]:
+    reference = cast(TaskPayloadReference, payload_reference)
     try:
-        file_contents = load_task_payload(payload_reference)
+        file_contents = load_task_payload(reference)
         return process_xml_upload(
             file_contents=file_contents,
             filename=filename,
             user_id=user_id,
         )
     finally:
-        delete_task_payload(payload_reference)
+        delete_task_payload(reference)

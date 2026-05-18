@@ -23,8 +23,11 @@ class UvicornAccess2xxFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
         if isinstance(args, tuple) and len(args) >= 5:
+            raw = args[4]
+            if not isinstance(raw, (int, str, bytes, bytearray)):
+                return True
             try:
-                status = int(args[4])
+                status = int(raw)
             except (TypeError, ValueError):
                 return True
             return not (200 <= status < 300)

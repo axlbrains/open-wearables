@@ -59,7 +59,7 @@ def idempotent(
             except Exception:
                 logger.exception(
                     "Idempotency key function raised; running %s without dedup",
-                    func.__name__,
+                    getattr(func, "__name__", "<unknown>"),
                 )
                 return func(*args, **kwargs)
 
@@ -68,7 +68,7 @@ def idempotent(
             except (redis.exceptions.RedisError, OSError) as exc:
                 logger.warning(
                     "Idempotency Redis unreachable; running %s without dedup: %s",
-                    func.__name__,
+                    getattr(func, "__name__", "<unknown>"),
                     exc,
                 )
                 return func(*args, **kwargs)
@@ -76,7 +76,7 @@ def idempotent(
             if not acquired:
                 logger.info(
                     "Task deduplicated by idempotency lock",
-                    extra={"handler": func.__name__, "lock_key": lock_key},
+                    extra={"handler": getattr(func, "__name__", "<unknown>"), "lock_key": lock_key},
                 )
                 return {"status": "deduplicated", "lock_key": lock_key}
 

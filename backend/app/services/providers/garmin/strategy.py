@@ -71,7 +71,7 @@ class GarminStrategy(BaseProviderStrategy):
             dedup_key=f"start_garmin_backfill:{user_id}",
         )
         return HistoricalSyncResult(
-            task_id=task.id,
+            task_id=task.id or "",
             method="webhook_backfill",
             message=f"Garmin {self.capabilities.max_historical_days}-day backfill started. "
             "Progress available via backfill/status.",
