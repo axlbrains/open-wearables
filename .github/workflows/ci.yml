@@ -85,7 +85,7 @@ jobs:
   backend-test:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
-    runs-on: axl-runner
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:18
