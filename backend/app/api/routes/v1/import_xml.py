@@ -50,7 +50,7 @@ def import_xml_file(
 
     return {
         "status": "processing",
-        "task_id": task.id,
+        "task_id": task.id or "",
         "user_id": user_id,
     }
 

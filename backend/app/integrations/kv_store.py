@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from typing import Any, Iterable, Set
 from uuid import uuid4
 
 from sqlalchemy import text
@@ -272,6 +272,8 @@ class KvStoreClient:
                 ),
                 {"k": key},
             ).first()
+        if row is None:
+            return 0
         return int(row[0])
 
     def delete(self, *keys: str) -> int:
@@ -313,7 +315,7 @@ class KvStoreClient:
             )
         return res.rowcount
 
-    def smembers(self, set_key: str) -> set[str]:
+    def smembers(self, set_key: str) -> Set[str]:
         with self._engine.connect() as conn:
             rows = conn.execute(
                 text(

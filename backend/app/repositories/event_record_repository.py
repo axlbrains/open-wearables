@@ -159,7 +159,11 @@ class EventRecordRepository(
         # Conflict — return the existing row.
         if existing := self._fetch_existing(db_session, data_source_id, creation):
             return existing
-        raise IntegrityError("ON CONFLICT skipped insert but no existing event_record row matched", None, None)
+        raise IntegrityError(
+            "ON CONFLICT skipped insert but no existing event_record row matched",
+            None,
+            Exception("missing existing row after ON CONFLICT"),
+        )
 
     def create_and_flush(self, db_session: DbSession, creator: EventRecordCreate) -> EventRecord:
         """Like create() but flushes instead of committing; caller is responsible for the commit.
@@ -174,7 +178,11 @@ class EventRecordRepository(
             return db_session.query(self.model).filter(self.model.id == inserted_id).one()
         if existing := self._fetch_existing(db_session, data_source_id, creation):
             return existing
-        raise IntegrityError("ON CONFLICT skipped insert but no existing event_record row matched", None, None)
+        raise IntegrityError(
+            "ON CONFLICT skipped insert but no existing event_record row matched",
+            None,
+            Exception("missing existing row after ON CONFLICT"),
+        )
 
     @handle_exceptions
     def bulk_create(
