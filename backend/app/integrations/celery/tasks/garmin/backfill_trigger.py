@@ -165,10 +165,16 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                         # Retry succeeded — skip the failure handling below
                         if data_type in retry_result.get("duplicate", []):
                             mark_type_success(user_id, data_type)
-                            dispatch_task(RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,args=[user_id], countdown=DELAY_BETWEEN_TYPES)
+                            dispatch_task(
+                                RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                                args=[user_id],
+                                countdown=DELAY_BETWEEN_TYPES,
+                            )
                             return {"status": "duplicate_skipped", "data_type": data_type}
-                        dispatch_task(RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT,
-                            args=[user_id, data_type], countdown=TRIGGERED_TIMEOUT_SECONDS
+                        dispatch_task(
+                            RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT,
+                            args=[user_id, data_type],
+                            countdown=TRIGGERED_TIMEOUT_SECONDS,
                         )
                         return {
                             "status": "triggered",
@@ -209,7 +215,11 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                         delay_seconds=delay,
                         user_id=user_id,
                     )
-                dispatch_task(RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,args=[user_id], countdown=delay)
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                    args=[user_id],
+                    countdown=delay,
+                )
                 return {"status": "failed", "error": error}
 
             if data_type in result.get("duplicate", []):
@@ -224,7 +234,11 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                     user_id=user_id,
                 )
                 mark_type_success(user_id, data_type)
-                dispatch_task(RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,args=[user_id], countdown=DELAY_BETWEEN_TYPES)
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                    args=[user_id],
+                    countdown=DELAY_BETWEEN_TYPES,
+                )
                 return {
                     "status": "duplicate_skipped",
                     "data_type": data_type,
@@ -232,7 +246,11 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                     "end_date": end_time.isoformat(),
                 }
 
-            dispatch_task(RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT,args=[user_id, data_type], countdown=TRIGGERED_TIMEOUT_SECONDS)
+            dispatch_task(
+                RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT,
+                args=[user_id, data_type],
+                countdown=TRIGGERED_TIMEOUT_SECONDS,
+            )
 
             return {
                 "status": "triggered",
@@ -287,7 +305,7 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                     delay_seconds=delay,
                     user_id=user_id,
                 )
-            dispatch_task(RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,args=[user_id], countdown=delay)
+            dispatch_task(RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE, args=[user_id], countdown=delay)
             return {"status": "failed", "error": error}
 
         except Exception as e:
@@ -304,5 +322,7 @@ def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
                 },
             )
             mark_type_failed(user_id, data_type, error)
-            dispatch_task(RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,args=[user_id], countdown=DELAY_BETWEEN_TYPES)
+            dispatch_task(
+                RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE, args=[user_id], countdown=DELAY_BETWEEN_TYPES
+            )
             return {"error": error}

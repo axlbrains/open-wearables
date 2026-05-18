@@ -31,7 +31,6 @@ from app.services.outgoing_webhooks.events import (
 from app.utils.security import create_access_token
 from tests.factories import DeveloperFactory
 
-
 # ---------------------------------------------------------------------------
 # Helpers — outgoing webhook helpers route through dispatch_task now, so
 # extract event_type / payload from the dispatch_task(...) call shape:
@@ -45,6 +44,7 @@ def _event_type_of(call: Any) -> str:
 
 def _payload_of(call: Any) -> dict[str, Any]:
     return call.kwargs["args"][1]
+
 
 # ---------------------------------------------------------------------------
 # WebhookEventType enum

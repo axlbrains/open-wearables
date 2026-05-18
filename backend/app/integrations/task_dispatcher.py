@@ -207,15 +207,25 @@ def _maybe_offload_payload(task_key: RegisteredTask, kwargs: dict[str, Any]) -> 
     from app.services.task_payload_storage import store_task_payload
 
     # Map of standard tasks to their reference-aware counterparts and the key to offload
-    OFFLOAD_MAP = {
-        RegisteredTask.PROCESS_XML_UPLOAD: ("file_contents", RegisteredTask.PROCESS_XML_UPLOAD_REFERENCE, "application/xml", "apple-xml"),
-        RegisteredTask.PROCESS_SDK_UPLOAD: ("content", RegisteredTask.PROCESS_SDK_UPLOAD_REFERENCE, "application/json", "sdk-sync"),
+    offload_map = {
+        RegisteredTask.PROCESS_XML_UPLOAD: (
+            "file_contents",
+            RegisteredTask.PROCESS_XML_UPLOAD_REFERENCE,
+            "application/xml",
+            "apple-xml",
+        ),
+        RegisteredTask.PROCESS_SDK_UPLOAD: (
+            "content",
+            RegisteredTask.PROCESS_SDK_UPLOAD_REFERENCE,
+            "application/json",
+            "sdk-sync",
+        ),
     }
 
-    if task_key not in OFFLOAD_MAP:
+    if task_key not in offload_map:
         return task_key, kwargs
 
-    payload_key, ref_task_key, content_type, prefix = OFFLOAD_MAP[task_key]
+    payload_key, ref_task_key, content_type, prefix = offload_map[task_key]
     payload = kwargs.get(payload_key)
 
     if not payload:
@@ -232,7 +242,7 @@ def _maybe_offload_payload(task_key: RegisteredTask, kwargs: dict[str, Any]) -> 
         payload_bytes,
         content_type=content_type,
         prefix=prefix,
-        filename=kwargs.get("filename") or f"{kwargs.get('batch_id', 'payload')}.data"
+        filename=kwargs.get("filename") or f"{kwargs.get('batch_id', 'payload')}.data",
     )
 
     # Create new kwargs for the reference task
@@ -327,8 +337,8 @@ def _dispatch_cloud_task(
 
     if countdown:
         task_body["scheduleTime"] = (
-            datetime.now(timezone.utc) + timedelta(seconds=countdown)
-        ).isoformat().replace("+00:00", "Z")
+            (datetime.now(timezone.utc) + timedelta(seconds=countdown)).isoformat().replace("+00:00", "Z")
+        )
 
     access_token = get_google_access_token()
     response = httpx.post(

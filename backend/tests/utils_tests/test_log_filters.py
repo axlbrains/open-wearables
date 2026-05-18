@@ -4,7 +4,7 @@ from app.utils.log_filters import UvicornAccess2xxFilter
 
 
 def _make_record(args: tuple | None) -> logging.LogRecord:
-    record = logging.LogRecord(
+    return logging.LogRecord(
         name="uvicorn.access",
         level=logging.INFO,
         pathname=__file__,
@@ -13,7 +13,6 @@ def _make_record(args: tuple | None) -> logging.LogRecord:
         args=args,
         exc_info=None,
     )
-    return record
 
 
 def test_drops_200() -> None:

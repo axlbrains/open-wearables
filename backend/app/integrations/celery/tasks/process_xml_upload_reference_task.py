@@ -1,8 +1,9 @@
 from typing import Any
 
+from celery import shared_task
+
 from app.integrations.celery.tasks.process_xml_upload_task import process_xml_upload
 from app.services.task_payload_storage import delete_task_payload, load_task_payload
-from celery import shared_task
 
 
 @shared_task

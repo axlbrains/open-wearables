@@ -180,8 +180,7 @@ def sync_vendor_data(
             # plain primitives; we re-fetch the ORM connection by id at the
             # end of each iteration when we need to update last_synced_at.
             connection_ctxs = [
-                _ConnectionSyncCtx(id=c.id, provider=c.provider, last_synced_at=c.last_synced_at)
-                for c in connections
+                _ConnectionSyncCtx(id=c.id, provider=c.provider, last_synced_at=c.last_synced_at) for c in connections
             ]
 
             log_structured(

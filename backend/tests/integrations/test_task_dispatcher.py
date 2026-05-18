@@ -24,7 +24,8 @@ async def test_serialize_payload_round_trips_bytes() -> None:
 
     serialized = serialize_payload(payload)
 
-    assert serialized["file_contents"] == {"__open_wearables_bytes__": base64.b64encode(b"<xml>payload</xml>").decode("ascii")}
+    expected_bytes = base64.b64encode(b"<xml>payload</xml>").decode("ascii")
+    assert serialized["file_contents"] == {"__open_wearables_bytes__": expected_bytes}
     assert deserialize_payload(serialized) == payload
 
 
@@ -97,8 +98,9 @@ def test_dispatch_task_uses_cloud_tasks_http_api(monkeypatch: pytest.MonkeyPatch
 
     assert request_url.endswith("/projects/test-project/locations/europe-west1/queues/ow-default/tasks")
     assert request_headers["Authorization"] == "Bearer metadata-token"
-    assert request_json["task"]["httpRequest"]["url"] == "https://worker.example.run.app/api/v1/internal/tasks/process_xml_upload"
-    assert request_json["task"]["httpRequest"]["oidcToken"]["serviceAccountEmail"] == "api@test-project.iam.gserviceaccount.com"
+    http_request = request_json["task"]["httpRequest"]
+    assert http_request["url"] == "https://worker.example.run.app/api/v1/internal/tasks/process_xml_upload"
+    assert http_request["oidcToken"]["serviceAccountEmail"] == "api@test-project.iam.gserviceaccount.com"
 
     raw_body = base64.b64decode(request_json["task"]["httpRequest"]["body"]).decode("utf-8")
     decoded = json.loads(raw_body)

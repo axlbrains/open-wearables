@@ -140,7 +140,11 @@ def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
                 remaining=remaining,
                 user_id=user_id_str,
             )
-            dispatch_task(RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT, args=[user_id_str, data_type], countdown=remaining)
+            dispatch_task(
+                RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT,
+                args=[user_id_str, data_type],
+                countdown=remaining,
+            )
             return {"status": "rescheduled", "remaining": remaining}
 
     mark_type_timed_out(user_id_str, data_type)

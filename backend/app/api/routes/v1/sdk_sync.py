@@ -110,4 +110,3 @@ def sync_sdk_data(
     )
 
     return UploadDataResponse(status_code=202, response="Import task queued successfully", user_id=user_id)
-
