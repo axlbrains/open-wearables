@@ -39,5 +39,9 @@ FROM python:3.13-slim
     ENV PATH="/opt/venv/bin:$PATH"
     ENV UV_PROJECT_ENVIRONMENT=/opt/venv
     ENV UV_NO_SYNC=true
+    # Python buffers stdout in 8KB chunks when not a TTY, which hides logs from
+    # Cloud Logging until the buffer fills or the process exits. In prod we
+    # want each log line to land immediately.
+    ENV PYTHONUNBUFFERED=1
 
     EXPOSE 8000
