@@ -1,5 +1,11 @@
-import logging
+import os
 import sys
+
+# DIAGNOSTIC: write directly to FD 1 before any imports that could replace sys.stdout
+os.write(1, b"OW-MAIN-FD1-STARTUP-MARKER\n")
+os.write(2, b"OW-MAIN-FD2-STARTUP-MARKER\n")
+
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from logging import INFO, StreamHandler, basicConfig
