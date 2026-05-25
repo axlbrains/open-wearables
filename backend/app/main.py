@@ -43,6 +43,8 @@ for _name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
 if settings.environment == EnvironmentType.PRODUCTION:
     logging.getLogger("uvicorn.access").addFilter(UvicornAccess2xxFilter())
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
@@ -99,6 +101,22 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
 @api.exception_handler(DatetimeParseError)
 async def datetime_parse_exception_handler(_: Request, exc: DatetimeParseError) -> None:
     raise handle_exception(exc, "")
+
+
+@api.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Log any uncaught exception with a full traceback before returning 500.
+
+    Without this, FastAPI/Starlette turns an uncaught error into a bare 500 with
+    nothing in the application logs, leaving production 5xx (e.g. on
+    GET /users/{id}/connections) impossible to root-cause — see
+    axlbrains/open-wearables#22.
+    """
+    logger.error("Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
 
 
 api.include_router(head_router)
