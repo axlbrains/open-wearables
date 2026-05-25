@@ -131,7 +131,12 @@ resource "google_cloud_run_v2_service" "backend_api" {
       }
 
       resources {
-        cpu_idle = true
+        # cpu_idle=false (CPU always allocated) so container stdout/stderr is
+        # reliably shipped to Cloud Logging. With cpu_idle=true a low-traffic
+        # instance is CPU-throttled the moment a request finishes, before the
+        # log-export pipeline flushes — silently dropping all app logs
+        # (only Cloud Run request logs survive). See axlbrains/open-wearables#22.
+        cpu_idle = false
         limits   = var.backend_api_resource_limits
       }
 
@@ -229,7 +234,10 @@ resource "google_cloud_run_v2_service" "backend_worker" {
       }
 
       resources {
-        cpu_idle = true
+        # cpu_idle=false: same rationale as the API service — keep CPU allocated
+        # so worker stdout/stderr reaches Cloud Logging instead of being dropped
+        # when the instance idles. See axlbrains/open-wearables#22.
+        cpu_idle = false
         limits   = var.backend_worker_resource_limits
       }
 
