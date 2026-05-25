@@ -50,7 +50,7 @@ async def _lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
 
-api = FastAPI(title=settings.api_name, lifespan=_lifespan)
+api = FastAPI(title=settings.api_name, version=settings.app_version, lifespan=_lifespan)
 celery_app = create_celery()
 init_sentry()
 raw_payload_storage.configure(
@@ -72,6 +72,16 @@ if static_dir.exists():
 @api.get("/")
 async def root() -> dict[str, str]:
     return {"message": "Server is running!"}
+
+
+@api.get("/health")
+async def health() -> dict[str, str]:
+    """Lightweight, unauthenticated health check exposing the real build version.
+
+    `version` reflects the deployed image (APP_VERSION build arg, see Dockerfile)
+    and is consumed by status.axl.coach's per-component version label.
+    """
+    return {"status": "ok", "version": settings.app_version}
 
 
 @api.exception_handler(RequestValidationError)

@@ -44,4 +44,9 @@ FROM python:3.13-slim
     # want each log line to land immediately.
     ENV PYTHONUNBUFFERED=1
 
+    # Real build version, surfaced on GET /health and FastAPI info.version.
+    # Passed by cloudbuild.yaml as --build-arg APP_VERSION=${SHORT_SHA}.
+    ARG APP_VERSION=dev
+    ENV APP_VERSION=$APP_VERSION
+
     EXPOSE 8000

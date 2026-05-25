@@ -34,6 +34,10 @@ class Settings(BaseSettings):
 
     # API SETTINGS
     api_name: str = "Open Wearables API"
+    # Real build version, injected at image build time via the APP_VERSION build arg
+    # (see backend/Dockerfile + cloudbuild.yaml). Surfaced on GET /health and as
+    # FastAPI's info.version. Defaults to "dev" for local / non-built runs.
+    app_version: str = "dev"
     api_port: int = 8000
     api_v1: str = "/api/v1"
     api_latest: str = api_v1
