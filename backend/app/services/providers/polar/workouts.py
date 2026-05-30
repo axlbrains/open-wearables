@@ -110,9 +110,13 @@ class PolarWorkouts(BaseWorkoutsTemplate):
 
         workout_type = get_unified_workout_type(raw_workout.sport, raw_workout.detailed_sport_info)
 
+        # axl-api#141: Polar may send the offset as a float; normalize to int once
+        # for the int-typed downstream helpers (and offset_to_iso's `{:02d}` formatting).
+        start_offset_minutes = int(raw_workout.start_time_utc_offset)
+
         start_date, end_date = self._extract_dates_with_offset(
             raw_workout.start_time,
-            raw_workout.start_time_utc_offset,
+            start_offset_minutes,
             raw_workout.duration,
         )
         duration_seconds = int((end_date - start_date).total_seconds())
@@ -120,12 +124,14 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         metrics = self._build_metrics(raw_workout)
 
         # convert from offset minutes to seconds first
-        zone_offset = offset_to_iso(raw_workout.start_time_utc_offset * 60)
+        zone_offset = offset_to_iso(start_offset_minutes * 60)
 
         record = EventRecordCreate(
             category="workout",
             type=workout_type.value,
-            source_name=raw_workout.device,
+            # axl-api#141: `device` is optional now (Polar omits it for phone-logged
+            # exercises); fall back to the provider name for the required source_name.
+            source_name=raw_workout.device or "polar",
             device_model=raw_workout.device,
             duration_seconds=duration_seconds,
             start_datetime=start_date,
