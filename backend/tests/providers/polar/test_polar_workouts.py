@@ -7,6 +7,7 @@ Tests the PolarWorkouts class for fetching and processing workout data from Pola
 from datetime import datetime
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.orm import Session
@@ -561,3 +562,82 @@ class TestPolarWorkoutsDataLoading:
 
         # Assert
         assert result == 0
+
+
+# axl-api#141 regression coverage ---------------------------------------------
+# Production bug: every hourly Polar sync landed status="partial" with
+# "workouts: 1 validation error for ExerciseJSON" because a single real
+# exercise (manually / phone-logged, missing `device`) failed validation and
+# raised, downgrading the whole sync to "partial" with zero workouts saved.
+
+
+def _build_polar_workouts() -> PolarWorkouts:
+    from app.models import EventRecord, User
+    from app.repositories.event_record_repository import EventRecordRepository
+    from app.repositories.user_connection_repository import UserConnectionRepository
+    from app.repositories.user_repository import UserRepository
+    from app.services.providers.polar.oauth import PolarOAuth
+
+    user_repo = UserRepository(User)
+    connection_repo = UserConnectionRepository()
+    workout_repo = EventRecordRepository(EventRecord)
+    oauth = PolarOAuth(
+        user_repo=user_repo,
+        connection_repo=connection_repo,
+        provider_name="polar",
+        api_base_url="https://www.polaraccesslink.com",
+    )
+    return PolarWorkouts(
+        workout_repo=workout_repo,
+        connection_repo=connection_repo,
+        provider_name="polar",
+        api_base_url="https://www.polaraccesslink.com",
+        oauth=oauth,
+    )
+
+
+class TestPolarExerciseJsonTolerance:
+    """ExerciseJSON must tolerate the realistically-varying Polar fields (axl-api#141)."""
+
+    def test_accepts_missing_device(self, sample_polar_exercise: dict) -> None:
+        raw = {k: v for k, v in sample_polar_exercise.items() if k != "device"}
+        exercise = PolarExerciseJSON(**raw)
+        assert exercise.device is None
+
+    def test_accepts_float_numeric_fields(self, sample_polar_exercise: dict) -> None:
+        raw = {
+            **sample_polar_exercise,
+            "distance": 8500.5,
+            "calories": 450.0,
+            "start_time_utc_offset": 60.0,
+        }
+        exercise = PolarExerciseJSON(**raw)
+        assert exercise.distance == 8500.5
+        assert exercise.calories == 450.0
+        assert exercise.start_time_utc_offset == 60.0
+
+
+class TestPolarWorkoutsParseExercises:
+    """_parse_exercises must skip (not raise on) malformed exercises (axl-api#141)."""
+
+    def test_skips_malformed_and_keeps_good(self, sample_polar_exercise: dict) -> None:
+        # One malformed exercise (missing required `sport`) must be skipped, not
+        # raise and fail the whole batch -- the valid exercise still parses.
+        bad = {k: v for k, v in sample_polar_exercise.items() if k != "sport"}
+        bad["id"] = "bad-exercise"
+        good = {**sample_polar_exercise, "id": "good-exercise"}
+        workouts = _build_polar_workouts()
+
+        parsed = workouts._parse_exercises([bad, good], uuid4())
+
+        assert len(parsed) == 1
+        assert parsed[0].id == "good-exercise"
+
+    def test_keeps_device_less_exercise(self, sample_polar_exercise: dict) -> None:
+        raw = {k: v for k, v in sample_polar_exercise.items() if k != "device"}
+        workouts = _build_polar_workouts()
+
+        parsed = workouts._parse_exercises([raw], uuid4())
+
+        assert len(parsed) == 1
+        assert parsed[0].device is None

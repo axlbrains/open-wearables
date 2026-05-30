@@ -42,18 +42,22 @@ class ExerciseJSON(BaseModel):
     id: str
     upload_time: str | None = None
     polar_user: str | None = None
-    device: str
+    # axl-api#141: Polar omits `device` for manually / phone-logged exercises,
+    # which made this required field fail validation and downgrade the whole
+    # workouts sync to "partial".
+    device: str | None = None
     device_id: str | None = None
 
     sport: str
     detailed_sport_info: str | None = None
 
     start_time: str
-    start_time_utc_offset: int
+    # axl-api#141: Polar may send numeric fields as floats; accept both.
+    start_time_utc_offset: int | float
     duration: str
 
-    calories: int | None = None
-    distance: int | None = None
+    calories: int | float | None = None
+    distance: int | float | None = None
     heart_rate: HeartRateJSON | None = None
     heart_rate_zones: list[HRZoneJSON] | None = None
 
