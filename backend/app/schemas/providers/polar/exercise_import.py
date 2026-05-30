@@ -29,9 +29,12 @@ class RoutePointJSON(BaseModel):
 
 class TrainingLoadProJSON(BaseModel):
     date: str | None = None
-    cardio_load: int | None = Field(None, alias="cardio-load")
-    muscle_load: int | None = Field(None, alias="muscle-load")
-    perceived_load: int | None = Field(None, alias="perceived-load")
+    # axl-api#141: Polar sends these training-load scores as floats (e.g.
+    # cardio-load=68.1259). A required-int here made the whole ExerciseJSON fail
+    # validation, so the offending exercise was skipped and its data lost.
+    cardio_load: int | float | None = Field(None, alias="cardio-load")
+    muscle_load: int | float | None = Field(None, alias="muscle-load")
+    perceived_load: int | float | None = Field(None, alias="perceived-load")
     cardio_load_interpretation: str | None = Field(None, alias="cardio-load-interpretation")
     muscle_load_interpretation: str | None = Field(None, alias="muscle-load-interpretation")
     perceived_load_interpretation: str | None = Field(None, alias="perceived-load-interpretation")
@@ -65,10 +68,11 @@ class ExerciseJSON(BaseModel):
     training_load_pro: TrainingLoadProJSON | None = None
     has_route: bool | None = None
 
-    fat_percentage: int | None = None
-    carbohydrate_percentage: int | None = None
-    protein_percentage: int | None = None
-    running_index: int | None = Field(None, alias="running-index")
+    # axl-api#141: Polar may report these as floats too; accept both.
+    fat_percentage: int | float | None = None
+    carbohydrate_percentage: int | float | None = None
+    protein_percentage: int | float | None = None
+    running_index: int | float | None = Field(None, alias="running-index")
 
     club_id: int | None = None
     club_name: str | None = None
