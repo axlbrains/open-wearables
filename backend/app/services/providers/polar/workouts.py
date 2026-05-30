@@ -1,9 +1,11 @@
+import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Iterable
 from uuid import UUID, uuid4
 
 import isodate
+from pydantic import ValidationError
 
 from app.constants.workout_types.polar import get_unified_workout_type
 from app.database import DbSession
@@ -16,6 +18,8 @@ from app.schemas.providers.polar import ExerciseJSON as PolarExerciseJSON
 from app.services.event_record_service import event_record_service
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.utils.dates import offset_to_iso
+
+logger = logging.getLogger(__name__)
 
 
 class PolarWorkouts(BaseWorkoutsTemplate):
@@ -140,6 +144,34 @@ class PolarWorkouts(BaseWorkoutsTemplate):
 
         return record, detail
 
+    def _parse_exercises(
+        self,
+        raw_exercises: Iterable[dict[str, Any]],
+        user_id: UUID,
+    ) -> list[PolarExerciseJSON]:
+        """Validate raw Polar exercises, skipping (not failing on) malformed ones.
+
+        axl-api#141: a single exercise that fails ``ExerciseJSON`` validation
+        used to raise and downgrade the whole workouts sync to "partial" with
+        zero workouts saved. We now log and skip the offending exercise so the
+        remaining valid exercises still import.
+        """
+        parsed: list[PolarExerciseJSON] = []
+        for raw_exercise in raw_exercises:
+            try:
+                parsed.append(PolarExerciseJSON(**raw_exercise))
+            except ValidationError as exc:
+                logger.warning(
+                    "Skipping malformed Polar exercise",
+                    extra={
+                        "action": "polar_workout_partial_data",
+                        "user_id": str(user_id),
+                        "exercise_id": raw_exercise.get("id") if isinstance(raw_exercise, dict) else None,
+                        "errors": exc.errors(include_url=False),
+                    },
+                )
+        return parsed
+
     def _build_bundles(
         self,
         raw: list[PolarExerciseJSON],
@@ -157,7 +189,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
     ) -> int:
         """Load data from Polar API."""
         workouts_data = self.get_workouts_from_api(db, user_id, **kwargs)
-        workouts = [PolarExerciseJSON(**w) for w in workouts_data]
+        workouts = self._parse_exercises(workouts_data, user_id)
 
         count = 0
         for record, detail in self._build_bundles(workouts, user_id):
@@ -174,7 +206,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         if not raw:
             return 0
         count = 0
-        for record, detail in self._build_bundles([PolarExerciseJSON(**raw)], user_id):
+        for record, detail in self._build_bundles(self._parse_exercises([raw], user_id), user_id):
             created = event_record_service.create(db, record)
             event_record_service.create_detail(db, detail.model_copy(update={"record_id": created.id}))
             count += 1
