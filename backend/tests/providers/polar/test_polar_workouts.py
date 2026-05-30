@@ -616,6 +616,34 @@ class TestPolarExerciseJsonTolerance:
         assert exercise.calories == 450.0
         assert exercise.start_time_utc_offset == 60.0
 
+    def test_accepts_float_training_load_pro(self, sample_polar_exercise: dict) -> None:
+        # Exact prod payload (axl-api#141): training-load-pro scores arrive as
+        # floats; a required-int previously failed the whole exercise here.
+        raw = {
+            **sample_polar_exercise,
+            "training_load_pro": {
+                "date": "2024-01-15",
+                "cardio-load": 68.1259,
+                "muscle-load": 12.5,
+                "perceived-load": 30.0,
+            },
+        }
+        exercise = PolarExerciseJSON(**raw)
+        assert exercise.training_load_pro is not None
+        assert exercise.training_load_pro.cardio_load == 68.1259
+        assert exercise.training_load_pro.muscle_load == 12.5
+
+    def test_accepts_float_percentages_and_running_index(self, sample_polar_exercise: dict) -> None:
+        raw = {
+            **sample_polar_exercise,
+            "fat_percentage": 42.5,
+            "carbohydrate_percentage": 57.5,
+            "running-index": 55.0,
+        }
+        exercise = PolarExerciseJSON(**raw)
+        assert exercise.fat_percentage == 42.5
+        assert exercise.running_index == 55.0
+
 
 class TestPolarWorkoutsParseExercises:
     """_parse_exercises must skip (not raise on) malformed exercises (axl-api#141)."""
