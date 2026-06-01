@@ -155,13 +155,9 @@ class TestSDKAuthRejectReasonLogging:
         assert _reject_reasons(capsys.readouterr().out) == []
 
     @pytest.mark.asyncio
-    async def test_expired_jwt_logs_reason_expired(
-        self, db: Session, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    async def test_expired_jwt_logs_reason_expired(self, db: Session, capsys: pytest.CaptureFixture[str]) -> None:
         with pytest.raises(HTTPException) as exc_info:
-            await get_sdk_auth(
-                db=db, token=_mint(exp_delta_minutes=-5), x_open_wearables_api_key=None
-            )
+            await get_sdk_auth(db=db, token=_mint(exp_delta_minutes=-5), x_open_wearables_api_key=None)
 
         assert exc_info.value.status_code == 401
         assert _reject_reasons(capsys.readouterr().out) == ["expired"]
@@ -181,13 +177,9 @@ class TestSDKAuthRejectReasonLogging:
         assert _reject_reasons(capsys.readouterr().out) == ["bad_signature"]
 
     @pytest.mark.asyncio
-    async def test_non_sdk_scope_logs_reason_bad_scope(
-        self, db: Session, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    async def test_non_sdk_scope_logs_reason_bad_scope(self, db: Session, capsys: pytest.CaptureFixture[str]) -> None:
         with pytest.raises(HTTPException) as exc_info:
-            await get_sdk_auth(
-                db=db, token=_mint(scope="developer"), x_open_wearables_api_key=None
-            )
+            await get_sdk_auth(db=db, token=_mint(scope="developer"), x_open_wearables_api_key=None)
 
         assert exc_info.value.status_code == 401
         assert _reject_reasons(capsys.readouterr().out) == ["bad_scope"]
