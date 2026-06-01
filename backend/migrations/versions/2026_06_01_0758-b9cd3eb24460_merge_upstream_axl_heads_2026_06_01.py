@@ -1,15 +1,15 @@
-"""merge kv_store and webhook_secret heads
+"""merge upstream + axl heads (2026-06-01)
 
-Revision ID: 13d979938096
-Revises: 7c2b1f4a9e3d, 6b11080054a0
+Revision ID: b9cd3eb24460
+Revises: 13d979938096, 2d316787b998
 
 """
 
 from typing import Sequence, Union
 
 # revision identifiers, used by Alembic.
-revision: str = "13d979938096"
-down_revision: Union[str, None] = ("7c2b1f4a9e3d", "6b11080054a0")
+revision: str = "b9cd3eb24460"
+down_revision: Union[str, None] = ("13d979938096", "2d316787b998")
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

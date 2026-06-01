@@ -1,6 +1,7 @@
 import contextlib
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
+from typing import cast
 
 import redis.exceptions
 from celery import shared_task
@@ -31,7 +32,7 @@ def finalize_stale_sleeps() -> None:
     redis_client = get_redis_client()
 
     try:
-        active_users = list(redis_client.smembers(active_users_key()))
+        active_users = list(cast("set[str]", redis_client.smembers(active_users_key())))
     except (redis.exceptions.RedisError, OSError) as exc:
         logger.warning("finalize_stale_sleeps: Redis unreachable, skipping (%s)", exc)
         return
