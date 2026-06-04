@@ -36,11 +36,11 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from celery import current_app as celery_app
 from fastapi import HTTPException, Request, status
 from pydantic import ValidationError
 
 from app.database import DbSession, SessionLocal
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories import UserConnectionRepository
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.enums import ProviderName
@@ -55,8 +55,6 @@ if TYPE_CHECKING:
     from app.services.providers.polar.workouts import PolarWorkouts
 
 logger = logging.getLogger(__name__)
-
-_PROCESS_PUSH_TASK = "app.integrations.celery.tasks.webhook_push_task.process_webhook_push"
 
 
 class PolarWebhookHandler(BaseWebhookHandler):
@@ -129,14 +127,18 @@ class PolarWebhookHandler(BaseWebhookHandler):
 
         store_raw_payload(source="webhook", provider="polar", payload=raw, trace_id=trace_id)
 
-        task = celery_app.send_task(_PROCESS_PUSH_TASK, args=["polar", raw, trace_id], queue="webhook_sync")
+        # Route through the configured task backend (Cloud Tasks in axlbrains prod,
+        # Celery in dev). The previous direct `celery_app.send_task` hard-required a
+        # Redis broker, which axlbrains prod doesn't run — so every inbound Polar
+        # webhook 500'd once real events started arriving (axlbrains/open-wearables
+        # outage 2026-06-04).
+        dispatch_task(RegisteredTask.PROCESS_WEBHOOK_PUSH, args=["polar", raw, trace_id])
         log_structured(
             logger,
             "info",
             "Enqueued Polar webhook processing task",
             provider="polar",
             trace_id=trace_id,
-            task_id=getattr(task, "id", None),
         )
 
         return {"status": "accepted"}
