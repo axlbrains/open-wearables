@@ -15,6 +15,12 @@ For Cursor and other agents: Refer to .cursor/rules/ for detailed configuration.
 - `.github/workflows/upstream-sync.yml` runs weekly (Mon 06:00 UTC, cron `0 6 * * 1`); GitHub delays it ~1–1.5h. The `main` leg opens a PR; the **`axl-integration` leg routinely fails on merge conflicts** and needs a manual merge — this is by design, not a regression.
 - Recurring conflict file: `backend/app/repositories/event_record_detail_repository.py`. Resolution convention: **keep our `create_and_flush()` that routes through `bulk_create` (`INSERT … ON CONFLICT DO UPDATE`)** over upstream's savepoint/`IntegrityError` variant — we avoid Postgres ERROR-log noise. Drop the now-unused `IntegrityError` import if you take our side.
 - **After every sync, run `alembic heads` (in `backend/`).** Upstream and our branch routinely add migrations off the same parent, leaving **two unmerged heads**. `alembic upgrade head` (what the prod init job runs) then fails with "Multiple head revisions present" and **migrations silently stop applying** — which already shipped a prod image whose code queried a column the DB never got (`provider_settings.webhook_secret`), 500ing `/connections` with no traceback (axlbrains/open-wearables#22). If >1 head: `alembic merge -m "merge heads" <rev1> <rev2>`, commit, and on prod apply the lagging branch with `alembic upgrade heads` (plural) before re-running the init job.
+- **Background tasks now go through `app/integrations/task_dispatcher.py` (`dispatch_task(RegisteredTask.X, …)`), not raw Celery `.delay()`/`apply_async`.** Garmin tasks live under `app/integrations/celery/tasks/garmin/`. When a sync conflict shows local `.delay()`/`apply_async` vs the dispatcher form, **take the dispatcher side.**
+
+## Contributing PRs upstream
+
+- Upstream `the-momentum` runs a `validate-pr-title` check (`amannn/action-semantic-pull-request`) that enforces a **fixed conventional-commit scope allowlist**: `backend, frontend, docs, api, mcp, auth, integrations, dashboard, settings, users`. Provider/feature names (`webhooks`, `fitbit`, `garmin`, `oura`, …) are **not** valid scopes — map them to **`integrations`** (or `backend`). A bad scope fails the check and blocks merge even on an approved PR.
+- Our fork→upstream PRs run gated: their workflow runs sit at `action_required` until an upstream maintainer approves each run, so fixing a title won't flip the check green until they re-approve.
 
 ## CI / local dev
 
