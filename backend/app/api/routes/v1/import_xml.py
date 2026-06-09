@@ -38,14 +38,19 @@ def import_xml_file(
     file_contents = file.file.read()
     filename = file.filename or "upload.xml"
 
-    handle = dispatch_task(
+    task = dispatch_task(
         RegisteredTask.PROCESS_XML_UPLOAD,
-        kwargs={"file_contents": file_contents, "filename": filename, "user_id": user_id},
+        kwargs={
+            "file_contents": file_contents,
+            "filename": filename,
+            "user_id": user_id,
+        },
+        dedup_key=f"xml_upload:{user_id}:{filename}",
     )
 
     return {
         "status": "processing",
-        "task_id": handle.id,
+        "task_id": task.id or "",
         "user_id": user_id,
     }
 

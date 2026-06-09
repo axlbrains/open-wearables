@@ -15,10 +15,10 @@ import logging
 from typing import Any
 from uuid import UUID, uuid4
 
-from celery import current_app as celery_app
 from fastapi import HTTPException, Request
 
 from app.database import DbSession
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories import UserConnectionRepository
 from app.services.providers.garmin.backfill_state import (
     get_backfill_status,
@@ -46,20 +46,16 @@ WELLNESS_TYPES: list[str] = [
     "bodyComps",
     "hrv",
     "stressDetails",
-    "respiration",
+    "allDayRespiration",
     "pulseox",
     "healthSnapshot",
     "skinTemp",
-    "moveiq",
+    "moveIQActivities",
     "mct",
     "userMetrics",
     "bloodPressures",
     "activityDetails",
 ]
-
-# Celery task paths — used with send_task() to avoid circular imports
-_TRIGGER_NEXT_TASK = "app.integrations.celery.tasks.garmin_backfill_task.trigger_next_pending_type"
-_PROCESS_PUSH_TASK = "app.integrations.celery.tasks.garmin_webhook_task.process_push"
 
 
 class GarminWebhookHandler(BaseWebhookHandler):
@@ -103,7 +99,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
         """Accept the webhook and enqueue async processing.
 
         Returns ``{"status": "accepted"}`` immediately so Garmin's 30-second
-        timeout is never exceeded. Actual processing runs in ``process_push``
+        timeout is never exceeded. Actual processing runs in ``process_webhook_push``
         Celery task.
         """
         request_trace_id = str(uuid4())[:8]
@@ -130,14 +126,20 @@ class GarminWebhookHandler(BaseWebhookHandler):
 
         store_raw_payload(source="webhook", provider="garmin", payload=payload, trace_id=request_trace_id)
 
-        task = celery_app.send_task(_PROCESS_PUSH_TASK, args=[payload, request_trace_id])
+        # garmin_sync is isolated from the default queue (via TaskDefinition.celery_queue
+        # in app/integrations/task_dispatcher.py) so high-volume live-push events
+        # and backfill-chain tasks don't starve each other.
+        handle = dispatch_task(
+            RegisteredTask.PROCESS_WEBHOOK_PUSH,
+            args=["garmin", payload, request_trace_id],
+        )
         log_structured(
             logger,
             "info",
             "Enqueued Garmin webhook processing task",
             provider="garmin",
             trace_id=request_trace_id,
-            task_id=getattr(task, "id", None),
+            task_id=handle.id,
         )
 
         return {"status": "accepted"}
@@ -145,7 +147,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
     def process_payload(self, db: DbSession, payload: dict[str, Any], trace_id: str) -> dict[str, Any]:
         """Process a Garmin PUSH payload synchronously.
 
-        Called by the ``process_push`` Celery task with its own DB session.
+        Called by the ``process_webhook_push`` Celery task with its own DB session.
         Raises on infrastructure errors so the task can retry.
         """
         errors: list[str] = []
@@ -311,7 +313,10 @@ class GarminWebhookHandler(BaseWebhookHandler):
                     current_window=backfill_status["current_window"],
                     total_windows=backfill_status["total_windows"],
                 )
-                celery_app.send_task(_TRIGGER_NEXT_TASK, args=[user_id_str])
+                dispatch_task(
+                    RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
+                    args=[user_id_str],
+                )
                 backfill_triggered.append(user_id_str)
         return backfill_triggered
 

@@ -29,6 +29,16 @@ from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.utils.dates import offset_to_iso
 from app.utils.structured_logging import log_structured
 
+# activityDetails.samples[] field → SeriesType mapping.
+# Only includes types already seeded in series_type_definition.
+# GPS/elevation (elevation, latitude, longitude) excluded until #1074.
+_ACTIVITY_SAMPLE_FIELD_MAP: list[tuple[str, SeriesType]] = [
+    ("heartRate", SeriesType.heart_rate),
+    ("speedMetersPerSecond", SeriesType.speed),
+    ("stepsPerMinute", SeriesType.cadence),
+    ("powerInWatts", SeriesType.power),
+]
+
 
 class Garmin247Data(Base247DataTemplate):
     """Garmin implementation for 247 data (sleep, dailies, epochs, body composition).
@@ -134,6 +144,7 @@ class Garmin247Data(Base247DataTemplate):
                     f"Error fetching {endpoint} chunk ({current_start.isoformat()} to {current_end.isoformat()}): {e}",
                     provider="garmin",
                     task="fetch_in_chunks",
+                    user_id=str(user_id),
                 )
 
             current_start = current_end
@@ -216,11 +227,11 @@ class Garmin247Data(Base247DataTemplate):
             components=sleep_score_components,
         )
 
-    def normalize_sleep(  # type: ignore[override]
+    def normalize_sleep(
         self,
         raw_sleep: dict[str, Any],
         user_id: UUID,
-    ) -> tuple[dict[str, Any], HealthScoreCreate | None]:
+    ) -> tuple[dict[str, Any], HealthScoreCreate | None]:  # ty:ignore[invalid-method-override]
         """Normalize Garmin sleep data to internal schema."""
         start_ts = raw_sleep.get("startTimeInSeconds", 0)
         duration = raw_sleep.get("durationInSeconds", 0)
@@ -309,6 +320,7 @@ class Garmin247Data(Base247DataTemplate):
                 f"Missing start/end time for sleep {sleep_id}",
                 provider="garmin",
                 task="build_sleep_record",
+                user_id=str(user_id),
             )
             return None
 
@@ -329,12 +341,14 @@ class Garmin247Data(Base247DataTemplate):
 
         stages = normalized_sleep.get("stages", {})
         asleep_seconds = stages.get("deep_seconds", 0) + stages.get("light_seconds", 0) + stages.get("rem_seconds", 0)
+        time_in_bed_seconds = normalized_sleep.get("duration_seconds") or 0
+        efficiency_score = Decimal(str(asleep_seconds / time_in_bed_seconds * 100)) if time_in_bed_seconds > 0 else None
+
         detail = EventRecordDetailCreate(
             record_id=sleep_id,
             sleep_total_duration_minutes=asleep_seconds // 60,
-            sleep_efficiency_score=Decimal(str(normalized_sleep.get("sleep_score", 0)))
-            if normalized_sleep.get("sleep_score")
-            else None,
+            sleep_time_in_bed_minutes=time_in_bed_seconds // 60,
+            sleep_efficiency_score=efficiency_score,
             sleep_deep_minutes=stages.get("deep_seconds", 0) // 60,
             sleep_light_minutes=stages.get("light_seconds", 0) // 60,
             sleep_rem_minutes=stages.get("rem_seconds", 0) // 60,
@@ -370,6 +384,7 @@ class Garmin247Data(Base247DataTemplate):
                 f"Error saving sleep record {normalized_sleep['id']}: {e}",
                 provider="garmin",
                 task="save_sleep_data",
+                user_id=str(user_id),
             )
 
     # -------------------------------------------------------------------------
@@ -826,6 +841,7 @@ class Garmin247Data(Base247DataTemplate):
                 "HRV data missing startTimeInSeconds",
                 provider="garmin",
                 task="build_hrv_samples",
+                user_id=str(user_id),
             )
             return samples
 
@@ -933,6 +949,11 @@ class Garmin247Data(Base247DataTemplate):
         max_hr = raw_activity.get("maxHeartRateInBeatsPerMinute")
         elevation_gain = raw_activity.get("elevationGainInMeters")
         avg_speed = raw_activity.get("averageSpeedInMetersPerSecond")
+        avg_cadence = (
+            raw_activity.get("averageRunCadenceInStepsPerMinute")
+            or raw_activity.get("averageBikingCadenceInRevPerMinute")
+            or raw_activity.get("averageSwimCadenceInStrokesPerMinute")
+        )
 
         detail = EventRecordDetailCreate(
             record_id=record_id,
@@ -942,9 +963,50 @@ class Garmin247Data(Base247DataTemplate):
             heart_rate_max=max_hr,
             total_elevation_gain=Decimal(str(elevation_gain)) if elevation_gain is not None else None,
             average_speed=Decimal(str(avg_speed)) if avg_speed is not None else None,
+            average_cadence=Decimal(str(avg_cadence)) if avg_cadence is not None else None,
         )
 
         return record, detail
+
+    def _build_activity_samples(
+        self,
+        user_id: UUID,
+        raw_activity_details: dict[str, Any],
+    ) -> list[TimeSeriesSampleCreate]:
+        """Build per-second data_point_series rows from activityDetails.samples[].
+
+        Called only when settings.ingest_workout_samples is True.
+        Failures here must never reach the caller — wrap in try/except at call site.
+        """
+        samples = raw_activity_details.get("samples", [])
+        if not samples:
+            return []
+
+        summary = raw_activity_details.get("summary", {})
+        zone_offset = offset_to_iso(summary.get("startTimeOffsetInSeconds"))
+
+        result: list[TimeSeriesSampleCreate] = []
+        for sample in samples:
+            ts = sample.get("startTimeInSeconds")
+            if ts is None:
+                continue
+            recorded_at = datetime.fromtimestamp(ts, tz=timezone.utc)
+            for field, series_type in _ACTIVITY_SAMPLE_FIELD_MAP:
+                value = sample.get(field)
+                if value is None:
+                    continue
+                result.append(
+                    TimeSeriesSampleCreate(
+                        id=uuid4(),
+                        user_id=user_id,
+                        source=self.provider_name,
+                        recorded_at=recorded_at,
+                        zone_offset=zone_offset,
+                        value=Decimal(str(value)),
+                        series_type=series_type,
+                    )
+                )
+        return result
 
     def save_activity_data(
         self,
@@ -1694,7 +1756,7 @@ class Garmin247Data(Base247DataTemplate):
                         all_samples.extend(self._build_stress_samples(user_id, item))
                         if score := self._normalize_body_battery_health_score(user_id, item):
                             all_health_scores.append(score)
-                    case "respiration":
+                    case "allDayRespiration":
                         all_samples.extend(self._build_respiration_samples(user_id, item))
                     case "pulseox":
                         all_samples.extend(self._build_pulse_ox_samples(user_id, item))
@@ -1717,13 +1779,35 @@ class Garmin247Data(Base247DataTemplate):
                             all_sleep_details.append(detail)
                         if health_score:
                             all_health_scores.append(health_score)
-                    case "activities" | "activityDetails":
+                    case "activities":
                         result = self._build_activity_record(user_id, item)
                         if result:
                             record, detail = result
                             all_records.append(record)
                             all_workout_details.append(detail)
-                    case "moveiq":
+                    case "activityDetails":
+                        # activityDetails items nest summary data one level deeper
+                        result = self._build_activity_record(user_id, item.get("summary", {}))
+                        if result:
+                            record, detail = result
+                            all_records.append(record)
+                            all_workout_details.append(detail)
+                        if settings.ingest_workout_samples:
+                            try:
+                                all_samples.extend(self._build_activity_samples(user_id, item))
+                            except Exception as e:
+                                activity_id = item.get("activityId") or item.get("summary", {}).get("activityId")
+                                log_structured(
+                                    self.logger,
+                                    "warning",
+                                    "Failed to build activity samples, skipping",
+                                    provider="garmin",
+                                    task="process_items_batch",
+                                    user_id=str(user_id),
+                                    activity_id=activity_id,
+                                    error=str(e),
+                                )
+                    case "moveIQActivities":
                         record = self._build_moveiq_record(user_id, item)
                         if record:
                             all_records.append(record)
@@ -1739,6 +1823,7 @@ class Garmin247Data(Base247DataTemplate):
                     f"Error building batch item for {summary_type}: {e}",
                     provider="garmin",
                     task="process_items_batch",
+                    user_id=str(user_id),
                 )
 
         count = 0
@@ -1826,11 +1911,11 @@ class Garmin247Data(Base247DataTemplate):
         """Use dailies for daily stats."""
         return self.get_dailies_data(db, user_id, start_date, end_date)
 
-    def normalize_daily_activity(  # type: ignore[override]
+    def normalize_daily_activity(
         self,
         raw_stats: dict[str, Any],
         user_id: UUID,
-    ) -> tuple[dict[str, Any], list[HealthScoreCreate]]:
+    ) -> tuple[dict[str, Any], list[HealthScoreCreate]]:  # ty:ignore[invalid-method-override]
         """Delegate to normalize_dailies."""
         return self.normalize_dailies(raw_stats, user_id)
 

@@ -82,6 +82,7 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
                     f"Error fetching Whoop workout data: {e}",
                     provider="whoop",
                     task="get_workouts",
+                    user_id=str(user_id),
                 )
                 # If we got some data, return what we have; otherwise re-raise
                 if all_workouts:
@@ -91,6 +92,7 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
                         f"Returning partial workout data due to error: {e}",
                         provider="whoop",
                         task="get_workouts",
+                        user_id=str(user_id),
                     )
                     break
                 raise
@@ -126,6 +128,39 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
     def get_workout_detail_from_api(self, db: DbSession, user_id: UUID, workout_id: str, **kwargs: Any) -> Any:
         """Get detailed workout data from Whoop API."""
         return self._make_api_request(db, user_id, f"/v2/activity/workout/{workout_id}")
+
+    def load_single_workout(self, db: DbSession, user_id: UUID, workout_id: str) -> int:
+        """Fetch a single workout by ID, normalize, and save to database. Returns 1 on success."""
+        try:
+            raw = self.get_workout_detail_from_api(db, user_id, workout_id)
+            store_raw_payload(
+                source="api_response",
+                provider="whoop",
+                payload=raw,
+                user_id=str(user_id),
+                trace_id=f"/v2/activity/workout/{workout_id}",
+            )
+            if not isinstance(raw, dict) or not raw:
+                return 0
+            workout = WhoopWorkoutJSON(**raw)
+            if workout.score_state != "SCORED" and workout.score is None:
+                return 0
+            record, detail, health_score = self._normalize_workout(workout, user_id)
+            created = event_record_service.create(db, record)
+            detail_for_record = detail.model_copy(update={"record_id": created.id})
+            event_record_service.create_detail(db, detail_for_record)
+            if health_score:
+                health_score_service.create(db, health_score)
+            return 1
+        except Exception as e:
+            log_structured(
+                self.logger,
+                "warning",
+                f"Failed to save workout record {workout_id}: {e}",
+                provider="whoop",
+                task="load_single_workout",
+            )
+            return 0
 
     def _extract_dates(self, start_timestamp: str, end_timestamp: str) -> tuple[datetime, datetime]:
         """Extract start and end dates from ISO 8601 strings."""
@@ -212,11 +247,11 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
             components=components or None,
         )
 
-    def _normalize_workout(  # type: ignore[override]
+    def _normalize_workout(
         self,
         raw_workout: WhoopWorkoutJSON,
         user_id: UUID,
-    ) -> tuple[EventRecordCreate, EventRecordDetailCreate, HealthScoreCreate | None]:
+    ) -> tuple[EventRecordCreate, EventRecordDetailCreate, HealthScoreCreate | None]:  # ty:ignore[invalid-method-override]
         """Normalize Whoop workout to EventRecordCreate, EventRecordDetailCreate, and strain HealthScoreCreate."""
         workout_id = uuid4()
 
@@ -349,7 +384,12 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
 
             except Exception as e:
                 log_structured(
-                    self.logger, "error", f"Error fetching Whoop workout data: {e}", provider="whoop", task="load_data"
+                    self.logger,
+                    "error",
+                    f"Error fetching Whoop workout data: {e}",
+                    provider="whoop",
+                    task="load_data",
+                    user_id=str(user_id),
                 )
                 # If we got some data, continue processing; otherwise re-raise
                 if all_workouts:
@@ -359,6 +399,7 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
                         f"Processing partial workout data due to error: {e}",
                         provider="whoop",
                         task="load_data",
+                        user_id=str(user_id),
                     )
                     break
                 raise
@@ -377,7 +418,11 @@ class WhoopWorkouts(BaseWorkoutsTemplate):
                     strain_scores.append(strain_score)
 
         if strain_scores:
-            health_score_service.bulk_create(db, strain_scores)
-            db.commit()
+            try:
+                health_score_service.bulk_create(db, strain_scores)
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
 
         return count

@@ -45,9 +45,7 @@ def store_task_payload(
             raise ValueError("TASK_PAYLOAD_GCS_BUCKET must be set when TASK_PAYLOAD_STORAGE_BACKEND=gcs")
 
         object_name = "/".join(
-            part.strip("/")
-            for part in [settings.task_payload_gcs_prefix, prefix, payload_id]
-            if part
+            part.strip("/") for part in [settings.task_payload_gcs_prefix, prefix, payload_id] if part
         )
         access_token = get_google_access_token()
         response = httpx.post(
@@ -70,9 +68,7 @@ def store_task_payload(
             "bucket": settings.task_payload_gcs_bucket,
         }
 
-    raise ValueError(
-        "Large payload offload requires TASK_PAYLOAD_STORAGE_BACKEND to be set to filesystem or gcs"
-    )
+    raise ValueError("Large payload offload requires TASK_PAYLOAD_STORAGE_BACKEND to be set to filesystem or gcs")
 
 
 def load_task_payload(reference: TaskPayloadReference) -> bytes:
@@ -84,8 +80,12 @@ def load_task_payload(reference: TaskPayloadReference) -> bytes:
             raise ValueError("Task payload reference bucket is required for GCS payloads")
 
         access_token = get_google_access_token()
+        object_url = _GCS_OBJECT_URL_TEMPLATE.format(
+            bucket=reference["bucket"],
+            object_name=quote(reference["locator"], safe=""),
+        )
         response = httpx.get(
-            f"{_GCS_OBJECT_URL_TEMPLATE.format(bucket=reference['bucket'], object_name=quote(reference['locator'], safe=''))}?alt=media",
+            f"{object_url}?alt=media",
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=30.0,
         )
@@ -106,7 +106,10 @@ def delete_task_payload(reference: TaskPayloadReference) -> None:
 
         access_token = get_google_access_token()
         response = httpx.delete(
-            _GCS_OBJECT_URL_TEMPLATE.format(bucket=reference["bucket"], object_name=quote(reference["locator"], safe="")),
+            _GCS_OBJECT_URL_TEMPLATE.format(
+                bucket=reference["bucket"],
+                object_name=quote(reference["locator"], safe=""),
+            ),
             headers={"Authorization": f"Bearer {access_token}"},
             timeout=30.0,
         )

@@ -1,9 +1,11 @@
 import base64
 import importlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from logging import getLogger
 from typing import Any
 
 import httpx
@@ -12,8 +14,12 @@ from celery import current_app as current_celery_app
 from app.config import settings
 from app.integrations.google_auth import get_google_access_token
 
+logger = getLogger(__name__)
+
 _CLOUD_TASKS_API_BASE_URL = "https://cloudtasks.googleapis.com/v2"
 _BYTES_MARKER = "__open_wearables_bytes__"
+_TASK_ID_INVALID_CHARS = re.compile(r"[^a-zA-Z0-9_-]")
+_TASK_ID_MAX_LEN = 500
 
 
 class TaskDispatchBackend(str, Enum):
@@ -23,12 +29,13 @@ class TaskDispatchBackend(str, Enum):
 
 class RegisteredTask(str, Enum):
     CHECK_GARMIN_TRIGGERED_TIMEOUT = "check_garmin_triggered_timeout"
+    EMIT_WEBHOOK_EVENT = "emit_webhook_event"
     FINALIZE_STALE_SLEEPS = "finalize_stale_sleeps"
     GC_STUCK_BACKFILLS = "gc_stuck_backfills"
-    POLL_SQS_TASK = "poll_sqs_task"
     PROCESS_AWS_UPLOAD = "process_aws_upload"
     PROCESS_SDK_UPLOAD = "process_sdk_upload"
     PROCESS_SDK_UPLOAD_REFERENCE = "process_sdk_upload_reference"
+    PROCESS_WEBHOOK_PUSH = "process_webhook_push"
     PROCESS_XML_UPLOAD = "process_xml_upload"
     PROCESS_XML_UPLOAD_REFERENCE = "process_xml_upload_reference"
     SEND_INVITATION_EMAIL = "send_invitation_email"
@@ -37,6 +44,7 @@ class RegisteredTask(str, Enum):
     SYNC_VENDOR_DATA = "sync_vendor_data"
     TRIGGER_GARMIN_BACKFILL_FOR_TYPE = "trigger_garmin_backfill_for_type"
     TRIGGER_GARMIN_NEXT_PENDING_TYPE = "trigger_garmin_next_pending_type"
+    VACUUM_KV_EXPIRED = "vacuum_kv_expired"
 
 
 @dataclass(frozen=True)
@@ -52,25 +60,27 @@ class TaskDispatchHandle:
     id: str | None
     backend: TaskDispatchBackend
     target: str
+    deduplicated: bool = False
 
 
 TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
     RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_backfill_task.check_triggered_timeout",
-        callable_path="app.integrations.celery.tasks.garmin_backfill_task.check_triggered_timeout",
+        task_name="app.integrations.celery.tasks.garmin.backfill_timeout.check_triggered_timeout",
+        callable_path="app.integrations.celery.tasks.garmin.backfill_timeout.check_triggered_timeout",
         cloud_tasks_queue="garmin_backfill",
+    ),
+    RegisteredTask.EMIT_WEBHOOK_EVENT: TaskDefinition(
+        task_name="app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event",
+        callable_path="app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event",
     ),
     RegisteredTask.FINALIZE_STALE_SLEEPS: TaskDefinition(
         task_name="app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps",
         callable_path="app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps",
     ),
     RegisteredTask.GC_STUCK_BACKFILLS: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_gc_task.gc_stuck_backfills",
-        callable_path="app.integrations.celery.tasks.garmin_gc_task.gc_stuck_backfills",
-    ),
-    RegisteredTask.POLL_SQS_TASK: TaskDefinition(
-        task_name="app.integrations.celery.tasks.poll_sqs_task.poll_sqs_task",
-        callable_path="app.integrations.celery.tasks.poll_sqs_task.poll_sqs_task",
+        task_name="app.integrations.celery.tasks.garmin.gc_task.gc_stuck_backfills",
+        callable_path="app.integrations.celery.tasks.garmin.gc_task.gc_stuck_backfills",
+        cloud_tasks_queue="garmin_backfill",
     ),
     RegisteredTask.PROCESS_AWS_UPLOAD: TaskDefinition(
         task_name="app.integrations.celery.tasks.process_aws_upload_task.process_aws_upload",
@@ -88,6 +98,11 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         celery_queue="sdk_sync",
         cloud_tasks_queue="sdk_sync",
     ),
+    RegisteredTask.PROCESS_WEBHOOK_PUSH: TaskDefinition(
+        task_name="app.integrations.celery.tasks.webhook_push_task.process_webhook_push",
+        callable_path="app.integrations.celery.tasks.webhook_push_task.process_webhook_push",
+        celery_queue="webhook_sync",
+    ),
     RegisteredTask.PROCESS_XML_UPLOAD: TaskDefinition(
         task_name="app.integrations.celery.tasks.process_xml_upload_task.process_xml_upload",
         callable_path="app.integrations.celery.tasks.process_xml_upload_task.process_xml_upload",
@@ -101,8 +116,8 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         callable_path="app.integrations.celery.tasks.send_email_task.send_invitation_email_task",
     ),
     RegisteredTask.START_GARMIN_FULL_BACKFILL: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_backfill_task.start_full_backfill",
-        callable_path="app.integrations.celery.tasks.garmin_backfill_task.start_full_backfill",
+        task_name="app.integrations.celery.tasks.garmin.backfill_task.start_full_backfill",
+        callable_path="app.integrations.celery.tasks.garmin.backfill_task.start_full_backfill",
         cloud_tasks_queue="garmin_backfill",
     ),
     RegisteredTask.SYNC_ALL_USERS: TaskDefinition(
@@ -114,14 +129,18 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         callable_path="app.integrations.celery.tasks.sync_vendor_data_task.sync_vendor_data",
     ),
     RegisteredTask.TRIGGER_GARMIN_BACKFILL_FOR_TYPE: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_backfill_task.trigger_backfill_for_type",
-        callable_path="app.integrations.celery.tasks.garmin_backfill_task.trigger_backfill_for_type",
+        task_name="app.integrations.celery.tasks.garmin.backfill_trigger.trigger_backfill_for_type",
+        callable_path="app.integrations.celery.tasks.garmin.backfill_trigger.trigger_backfill_for_type",
         cloud_tasks_queue="garmin_backfill",
     ),
     RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin_backfill_task.trigger_next_pending_type",
-        callable_path="app.integrations.celery.tasks.garmin_backfill_task.trigger_next_pending_type",
+        task_name="app.integrations.celery.tasks.garmin.backfill_task.trigger_next_pending_type",
+        callable_path="app.integrations.celery.tasks.garmin.backfill_task.trigger_next_pending_type",
         cloud_tasks_queue="garmin_backfill",
+    ),
+    RegisteredTask.VACUUM_KV_EXPIRED: TaskDefinition(
+        task_name="app.integrations.celery.tasks.kv_vacuum_task.vacuum_kv_expired",
+        callable_path="app.integrations.celery.tasks.kv_vacuum_task.vacuum_kv_expired",
     ),
 }
 
@@ -132,7 +151,21 @@ def dispatch_task(
     args: list[Any] | None = None,
     kwargs: dict[str, Any] | None = None,
     countdown: int | None = None,
+    dedup_key: str | None = None,
 ) -> TaskDispatchHandle:
+    """Dispatch a registered task to the configured backend.
+
+    ``dedup_key`` is optional scheduling-level deduplication: when set, the task
+    is given a stable Cloud Tasks name. A second dispatch with the same key
+    while the first is still in the queue (or recently completed, ~1h) is
+    rejected by Cloud Tasks with 409 ALREADY_EXISTS — we swallow that and
+    return ``TaskDispatchHandle(deduplicated=True)``.
+
+    This catches accidental double-dispatch from app code. It does NOT prevent
+    duplicate execution from Cloud Tasks retries (those reuse the same name);
+    for that, wrap the handler with ``@idempotent`` from
+    ``app.integrations.idempotency``.
+    """
     task_key = _normalize_task(task)
     task_args = args or []
     task_kwargs = kwargs or {}
@@ -144,12 +177,15 @@ def dispatch_task(
     definition = TASK_DEFINITIONS[task_key]
 
     if backend is TaskDispatchBackend.CELERY:
+        # Celery doesn't dedupe natively; pass dedup_key as task_id so it shows
+        # up in result backends and logs, but accept that duplicates can run.
         result = current_celery_app.send_task(
             definition.task_name,
             args=task_args,
             kwargs=task_kwargs,
             countdown=countdown,
             queue=definition.celery_queue,
+            task_id=_sanitize_task_id(dedup_key) if dedup_key else None,
         )
         return TaskDispatchHandle(id=result.id, backend=backend, target=definition.task_name)
 
@@ -160,6 +196,7 @@ def dispatch_task(
             args=task_args,
             kwargs=task_kwargs,
             countdown=countdown,
+            dedup_key=dedup_key,
         )
 
     raise ValueError(f"Unsupported task dispatch backend: {settings.task_dispatch_backend}")
@@ -170,15 +207,25 @@ def _maybe_offload_payload(task_key: RegisteredTask, kwargs: dict[str, Any]) -> 
     from app.services.task_payload_storage import store_task_payload
 
     # Map of standard tasks to their reference-aware counterparts and the key to offload
-    OFFLOAD_MAP = {
-        RegisteredTask.PROCESS_XML_UPLOAD: ("file_contents", RegisteredTask.PROCESS_XML_UPLOAD_REFERENCE, "application/xml", "apple-xml"),
-        RegisteredTask.PROCESS_SDK_UPLOAD: ("content", RegisteredTask.PROCESS_SDK_UPLOAD_REFERENCE, "application/json", "sdk-sync"),
+    offload_map = {
+        RegisteredTask.PROCESS_XML_UPLOAD: (
+            "file_contents",
+            RegisteredTask.PROCESS_XML_UPLOAD_REFERENCE,
+            "application/xml",
+            "apple-xml",
+        ),
+        RegisteredTask.PROCESS_SDK_UPLOAD: (
+            "content",
+            RegisteredTask.PROCESS_SDK_UPLOAD_REFERENCE,
+            "application/json",
+            "sdk-sync",
+        ),
     }
 
-    if task_key not in OFFLOAD_MAP:
+    if task_key not in offload_map:
         return task_key, kwargs
 
-    payload_key, ref_task_key, content_type, prefix = OFFLOAD_MAP[task_key]
+    payload_key, ref_task_key, content_type, prefix = offload_map[task_key]
     payload = kwargs.get(payload_key)
 
     if not payload:
@@ -195,7 +242,7 @@ def _maybe_offload_payload(task_key: RegisteredTask, kwargs: dict[str, Any]) -> 
         payload_bytes,
         content_type=content_type,
         prefix=prefix,
-        filename=kwargs.get("filename") or f"{kwargs.get('batch_id', 'payload')}.data"
+        filename=kwargs.get("filename") or f"{kwargs.get('batch_id', 'payload')}.data",
     )
 
     # Create new kwargs for the reference task
@@ -248,6 +295,7 @@ def _dispatch_cloud_task(
     args: list[Any],
     kwargs: dict[str, Any],
     countdown: int | None,
+    dedup_key: str | None = None,
 ) -> TaskDispatchHandle:
     project_id = _require_setting(settings.task_dispatcher_gcp_project_id, "task_dispatcher_gcp_project_id")
     location = _require_setting(settings.task_dispatcher_gcp_location, "task_dispatcher_gcp_location")
@@ -267,38 +315,57 @@ def _dispatch_cloud_task(
         }
     ).encode("utf-8")
 
-    task_request: dict[str, Any] = {
-        "task": {
-            "httpRequest": {
-                "httpMethod": "POST",
-                "url": target_url,
-                "headers": {
-                    "Content-Type": "application/json",
-                },
-                "body": base64.b64encode(request_body).decode("ascii"),
-                "oidcToken": {
-                    "serviceAccountEmail": service_account_email,
-                    "audience": audience,
-                },
-            }
+    task_body: dict[str, Any] = {
+        "httpRequest": {
+            "httpMethod": "POST",
+            "url": target_url,
+            "headers": {
+                "Content-Type": "application/json",
+            },
+            "body": base64.b64encode(request_body).decode("ascii"),
+            "oidcToken": {
+                "serviceAccountEmail": service_account_email,
+                "audience": audience,
+            },
         }
     }
 
+    queue_path = f"projects/{project_id}/locations/{location}/queues/{queue_name}"
+    if dedup_key:
+        task_id = _sanitize_task_id(dedup_key)
+        task_body["name"] = f"{queue_path}/tasks/{task_id}"
+
     if countdown:
-        task_request["task"]["scheduleTime"] = (
-            datetime.now(timezone.utc) + timedelta(seconds=countdown)
-        ).isoformat().replace("+00:00", "Z")
+        task_body["scheduleTime"] = (
+            (datetime.now(timezone.utc) + timedelta(seconds=countdown)).isoformat().replace("+00:00", "Z")
+        )
 
     access_token = get_google_access_token()
     response = httpx.post(
-        f"{_CLOUD_TASKS_API_BASE_URL}/projects/{project_id}/locations/{location}/queues/{queue_name}/tasks",
+        f"{_CLOUD_TASKS_API_BASE_URL}/{queue_path}/tasks",
         headers={
             "Authorization": f"Bearer {access_token}",
             "Content-Type": "application/json",
         },
-        json=task_request,
+        json={"task": task_body},
         timeout=10.0,
     )
+
+    if dedup_key and response.status_code == 409:
+        # Cloud Tasks returns ALREADY_EXISTS when a task with this name is
+        # already enqueued or was recently completed. Treat as a successful
+        # deduplication — the prior dispatch covers this work.
+        logger.info(
+            "Cloud Tasks dispatch deduplicated",
+            extra={"task_key": task_key.value, "dedup_key": dedup_key},
+        )
+        return TaskDispatchHandle(
+            id=task_body.get("name"),
+            backend=TaskDispatchBackend.CLOUD_TASKS,
+            target=target_url,
+            deduplicated=True,
+        )
+
     response.raise_for_status()
     response_json = response.json()
 
@@ -307,6 +374,12 @@ def _dispatch_cloud_task(
         backend=TaskDispatchBackend.CLOUD_TASKS,
         target=target_url,
     )
+
+
+def _sanitize_task_id(raw: str) -> str:
+    """Make ``raw`` a valid Cloud Tasks task ID: ``[a-zA-Z0-9_-]{1,500}``."""
+    sanitized = _TASK_ID_INVALID_CHARS.sub("_", raw)
+    return sanitized[:_TASK_ID_MAX_LEN] or "_"
 
 
 def _normalize_task(task: RegisteredTask | str) -> RegisteredTask:

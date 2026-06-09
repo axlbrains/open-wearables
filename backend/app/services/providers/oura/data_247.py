@@ -116,6 +116,7 @@ class Oura247Data(Base247DataTemplate):
                     action="oura_api_fetch_error",
                     endpoint=endpoint,
                     error=str(e),
+                    user_id=str(user_id),
                 )
                 if all_data:
                     log_structured(
@@ -125,6 +126,7 @@ class Oura247Data(Base247DataTemplate):
                         action="oura_api_partial_data",
                         endpoint=endpoint,
                         error=str(e),
+                        user_id=str(user_id),
                     )
                     break
                 raise
@@ -192,7 +194,7 @@ class Oura247Data(Base247DataTemplate):
         self,
         raw_samples: list[dict[str, Any]],
         user_id: UUID,
-    ) -> tuple[dict[str, list[dict[str, Any]]], list[HealthScoreCreate]]:  # type: ignore[override]
+    ) -> tuple[dict[str, list[dict[str, Any]]], list[HealthScoreCreate]]:  # ty:ignore[invalid-method-override]
         """Normalize daily activity data into categorized samples and health scores."""
         activity_items = [OuraDailyActivityJSON(**item) for item in raw_samples]
         activity_scores = self._normalize_activity_scores(activity_items, user_id)
@@ -258,6 +260,7 @@ class Oura247Data(Base247DataTemplate):
                         action="oura_activity_save_error",
                         metric=key,
                         error=str(e),
+                        user_id=str(user_id),
                     )
 
         if samples:
@@ -336,10 +339,12 @@ class Oura247Data(Base247DataTemplate):
                     "Failed to save cardiovascular age data",
                     action="oura_cardiovascular_age_save_error",
                     error=str(e),
+                    user_id=str(user_id),
                 )
 
         if samples:
             timeseries_service.bulk_create_samples(db, samples)
+            db.commit()
         return len(samples)
 
     # -------------------------------------------------------------------------
@@ -449,7 +454,6 @@ class Oura247Data(Base247DataTemplate):
         recovery_metrics, health_scores = normalized
 
         metrics = [
-            ("recovery_score", SeriesType.recovery_score),
             ("temperature_deviation", SeriesType.skin_temperature_deviation),
             ("temperature_trend_deviation", SeriesType.skin_temperature_trend_deviation),
         ]
@@ -481,6 +485,7 @@ class Oura247Data(Base247DataTemplate):
                             action="oura_readiness_save_error",
                             field=field_name,
                             error=str(e),
+                            user_id=str(user_id),
                         )
 
         if samples:
@@ -501,10 +506,39 @@ class Oura247Data(Base247DataTemplate):
         start_time: datetime,
         end_time: datetime,
     ) -> list[dict[str, Any]]:
-        """Fetch sleep data from Oura API."""
+        """Fetch sleep data from Oura API.
+
+        Pads the ``[start_date, end_date]`` window by one day on each
+        side before serialization.  Oura's ``/v2/usercollection/sleep``
+        filters sessions by their ``day`` field with
+        ``start_date < day <= end_date`` semantics — the start is
+        exclusive — so a narrow request whose ``start_date`` falls on
+        the same calendar day as the target session returns ``[]``
+        even though that session exists in their database.
+
+        Empirically (verified against a live Oura account whose
+        ``day=2026-05-06`` session was visible in the dashboard):
+
+        ===============================  ==============
+        ``?start_date=…&end_date=…``     items returned
+        ===============================  ==============
+        ``05-06`` … ``05-06``            0
+        ``05-06`` … ``05-07``            0
+        ``05-06`` … ``05-08``            0
+        ``05-05`` … ``05-06``            1  ← day=05-06
+        ``05-05`` … ``05-07``            1
+        ``05-04`` … ``05-07``            2
+        ===============================  ==============
+
+        Without padding, live periodic syncs (where the natural
+        ``[start, end]`` window collapses to minutes inside the same
+        calendar day after the first cycle) silently miss today's
+        sleep.  ``save_sleep_data`` is idempotent on ``external_id``
+        so the over-fetch at both boundaries is safe.
+        """
         params = {
-            "start_date": start_time.strftime("%Y-%m-%d"),
-            "end_date": end_time.strftime("%Y-%m-%d"),
+            "start_date": (start_time - timedelta(days=1)).strftime("%Y-%m-%d"),
+            "end_date": (end_time + timedelta(days=1)).strftime("%Y-%m-%d"),
         }
         return self._paginate(db, user_id, "/v2/usercollection/sleep", params)
 
@@ -624,6 +658,7 @@ class Oura247Data(Base247DataTemplate):
                     "Skipping sleep record: missing start/end time",
                     action="oura_sleep_skip",
                     sleep_id=str(sleep_id),
+                    user_id=str(user_id),
                 )
                 continue
 
@@ -669,6 +704,7 @@ class Oura247Data(Base247DataTemplate):
                 event_record_service.create_or_merge_sleep(db, user_id, record, detail, settings.sleep_end_gap_minutes)
                 count += 1
             except Exception as e:
+                db.rollback()
                 log_structured(
                     self.logger,
                     "error",
@@ -676,6 +712,7 @@ class Oura247Data(Base247DataTemplate):
                     action="oura_sleep_save_error",
                     sleep_id=str(sleep_id),
                     error=str(e),
+                    user_id=str(user_id),
                 )
 
             hr: OuraIntervalData | None = normalized_sleep.get("heart_rate")
@@ -711,6 +748,7 @@ class Oura247Data(Base247DataTemplate):
                         action=action,
                         sleep_id=str(sleep_id),
                         error=str(e),
+                        user_id=str(user_id),
                     )
 
         return count
@@ -843,6 +881,7 @@ class Oura247Data(Base247DataTemplate):
                         "Failed to save SpO2 data",
                         action="oura_spo2_save_error",
                         error=str(e),
+                        user_id=str(user_id),
                     )
 
             bdi = item.get("breathing_disturbance_index")
@@ -865,10 +904,12 @@ class Oura247Data(Base247DataTemplate):
                         "Failed to save breathing disturbance index",
                         action="oura_bdi_save_error",
                         error=str(e),
+                        user_id=str(user_id),
                     )
 
         if samples:
             timeseries_service.bulk_create_samples(db, samples)
+            db.commit()
         return len(samples)
 
     # -------------------------------------------------------------------------
@@ -933,10 +974,12 @@ class Oura247Data(Base247DataTemplate):
                     "Failed to save HR sample",
                     action="oura_hr_save_error",
                     error=str(e),
+                    user_id=str(user_id),
                 )
 
         if samples:
             timeseries_service.bulk_create_samples(db, samples)
+            db.commit()
         return len(samples)
 
     # -------------------------------------------------------------------------
@@ -970,6 +1013,7 @@ class Oura247Data(Base247DataTemplate):
                 "Failed to normalize personal info",
                 action="oura_personal_info_normalization_error",
                 error=str(e),
+                user_id=str(user_id),
             )
             return {}
 
@@ -1026,6 +1070,7 @@ class Oura247Data(Base247DataTemplate):
 
         if samples:
             timeseries_service.bulk_create_samples(db, samples)
+            db.commit()
         return len(samples)
 
     # -------------------------------------------------------------------------
@@ -1079,10 +1124,12 @@ class Oura247Data(Base247DataTemplate):
                     "Failed to save Vo2 data",
                     action="oura_vo2_save_error",
                     error=str(e),
+                    user_id=str(user_id),
                 )
 
         if samples:
             timeseries_service.bulk_create_samples(db, samples)
+            db.commit()
         return len(samples)
 
     # -------------------------------------------------------------------------
@@ -1157,6 +1204,7 @@ class Oura247Data(Base247DataTemplate):
             try:
                 results[data_type] = fn()
             except Exception as e:
+                db.rollback()
                 results[data_type] = 0
                 log_structured(
                     self.logger,

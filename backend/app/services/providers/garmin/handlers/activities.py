@@ -13,8 +13,10 @@ from sqlalchemy.exc import IntegrityError
 from app.database import DbSession
 from app.repositories import UserConnectionRepository
 from app.schemas.providers.garmin import ActivityJSON as GarminActivityJSON
+from app.schemas.sync_status import SyncSource, SyncStatus
 from app.services.providers.garmin.backfill_state import get_trace_id
 from app.services.providers.garmin.workouts import GarminWorkouts
+from app.services.sync_status_service import completed, new_run_id
 from app.utils.structured_logging import log_structured
 
 logger = logging.getLogger(__name__)
@@ -85,6 +87,7 @@ def process_activity_notification(
             provider="garmin",
             trace_id=trace_id,
             activity_id=activity_id,
+            user_id=str(internal_user_id),
             error=str(e),
         )
         return {**base_result, "status": "validation_error", "error": f"Invalid activity data: {e}"}
@@ -104,6 +107,7 @@ def process_activity_notification(
             provider="garmin",
             trace_id=trace_id,
             activity_id=activity_id,
+            user_id=str(internal_user_id),
         )
         return {**base_result, "internal_user_id": str(internal_user_id), "status": "duplicate"}
 
@@ -114,7 +118,18 @@ def process_activity_notification(
         provider="garmin",
         trace_id=trace_id,
         activity_id=activity_id,
+        user_id=str(internal_user_id),
         record_ids=[str(rid) for rid in created_ids],
+    )
+    completed(
+        internal_user_id,
+        "garmin",
+        SyncSource.WEBHOOK,
+        run_id=new_run_id(prefix=f"garmin_webhook_activity_{activity_id}"),
+        status=SyncStatus.SUCCESS,
+        message=f"Garmin activity received: {activity_name}",
+        items_processed=len(created_ids),
+        metadata={"trace_id": trace_id, "activity_id": activity_id, "activity_type": activity_type},
     )
     return {
         **base_result,

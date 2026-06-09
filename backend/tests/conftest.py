@@ -17,7 +17,8 @@ from urllib.parse import urlparse
 import pytest
 import redis as redis_lib
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from pydantic import SecretStr
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 from testcontainers.postgres import PostgresContainer
 from testcontainers.redis import RedisContainer
@@ -80,6 +81,11 @@ def engine(_postgres_url: str) -> Any:
             if not existing:
                 series_type = SeriesTypeDefinition(id=type_id, code=enum.value, unit=unit)
                 session.add(series_type)
+        session.commit()
+        # Reset the sequence so auto-generated IDs don't collide with seeded ones
+        session.execute(
+            text("SELECT setval('series_type_definition_id_seq', (SELECT MAX(id) FROM series_type_definition))")
+        )
         session.commit()
 
     yield test_engine
@@ -186,6 +192,11 @@ def _configure_redis(_redis_url: str) -> Generator[None, None, None]:
     with (
         patch.object(settings, "redis_host", parsed.hostname or "localhost"),
         patch.object(settings, "redis_port", parsed.port or 6379),
+        # Force _redis_configured() in app.integrations.redis_client to short-
+        # circuit to True; otherwise it treats "localhost" as not-configured
+        # and falls through to the Postgres kv_store, which then tries to
+        # resolve docker-compose's "db" host and DNS-fails inside CI.
+        patch.object(settings, "redis_url_override", SecretStr(_redis_url)),
     ):
         yield
 
@@ -215,14 +226,15 @@ def mock_svix_lifespan() -> Generator[MagicMock, None, None]:
 
 @pytest.fixture(autouse=True)
 def mock_webhook_dispatch() -> Generator[MagicMock, None, None]:
-    """Prevent outgoing webhook tasks from attempting real Redis/Celery connections.
+    """Prevent outgoing webhook tasks from attempting real backend connections.
 
-    Patches the Celery task's delay so tests that don't care about webhook
-    emission never hang on a missing broker.  Tests that DO verify dispatch
-    behaviour override this via their own @patch decorator (innermost wins).
+    Patches ``dispatch_task`` so tests that don't care about webhook emission
+    never hang trying to reach Redis/Cloud Tasks.  Tests that DO verify
+    dispatch behaviour override this via their own @patch decorator
+    (innermost wins).
     """
-    with patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event") as mock:
-        mock.delay.return_value = None
+    with patch("app.integrations.task_dispatcher.dispatch_task") as mock:
+        mock.return_value = None
         yield mock
 
 
@@ -233,14 +245,7 @@ def mock_celery_tasks(monkeypatch: pytest.MonkeyPatch) -> Generator[MagicMock, N
     mock_task.delay.return_value = MagicMock()
     mock_task.apply_async.return_value = MagicMock()
 
-    mock_handler_celery = MagicMock()
-    mock_handler_celery.send_task.return_value.id = "mock-task-id"
-
-    with (
-        patch("celery.current_app") as mock_celery,
-        # Prevent webhook handler from dispatching the backfill Celery task
-        patch("app.services.providers.garmin.webhook_handler.celery_app", mock_handler_celery),
-    ):
+    with patch("celery.current_app") as mock_celery:
         # Configure Celery to use in-memory broker and result backend
         # We Mock the conf object to return our test settings
         mock_conf = MagicMock()

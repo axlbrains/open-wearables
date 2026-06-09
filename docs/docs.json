@@ -117,6 +117,15 @@
             ]
           },
           {
+            "group": "Data Migrations",
+            "pages": [
+              "data-migrations/index",
+              "data-migrations/backfill-garmin-sleep-end-datetime",
+              "data-migrations/backfill-sleep-scores",
+              "data-migrations/normalize-body-fat-percentage"
+            ]
+          },
+          {
             "group": "Configuration",
             "pages": [
               "dev-guides/aws-setup",
@@ -154,6 +163,7 @@
             "pages": [
               "api-reference/guides/quick-integration",
               "api-reference/guides/webhooks",
+              "api-reference/guides/sync-status-stream",
               "api-reference/guides/apple-xml-import",
               "api-reference/guides/provider-setup",
               "api-reference/guides/error-handling"
@@ -220,7 +230,9 @@
             "group": "Events",
             "pages": [
               "GET /api/v1/users/{user_id}/events/workouts",
-              "GET /api/v1/users/{user_id}/events/sleep"
+              "DELETE /api/v1/users/{user_id}/events/workouts/{workout_id}",
+              "GET /api/v1/users/{user_id}/events/sleep",
+              "DELETE /api/v1/users/{user_id}/events/sleep/{sleep_id}"
             ]
           },
           {
@@ -264,6 +276,15 @@
               "POST /api/v1/webhooks/endpoints/{endpoint_id}/test",
               "GET /api/v1/webhooks/messages",
               "GET /api/v1/webhooks/endpoints/{endpoint_id}/attempts"
+            ]
+          },
+          {
+            "group": "Sync Status",
+            "pages": [
+              "GET /api/v1/users/{user_id}/sync/stream",
+              "GET /api/v1/users/{user_id}/sync/recent",
+              "GET /api/v1/users/{user_id}/sync/runs",
+              "GET /api/v1/sync/runs"
             ]
           }
         ]

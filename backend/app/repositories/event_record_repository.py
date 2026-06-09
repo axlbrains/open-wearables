@@ -77,38 +77,112 @@ class EventRecordRepository(
             .one_or_none()
         )
 
+    def _upsert_returning(self, db_session: DbSession, creation: EventRecord) -> UUID | None:
+        """INSERT ... ON CONFLICT DO NOTHING ... RETURNING id.
+
+        Returns the new id on insert, or None when the unique
+        ``(data_source_id, start_datetime, end_datetime)`` index already had a row.
+        Unlike a plain INSERT inside a savepoint, ON CONFLICT does not raise
+        IntegrityError — so PostgreSQL doesn't log a duplicate-key ERROR.
+        """
+        values = {
+            col.name: getattr(creation, col.name)
+            for col in self.model.__table__.columns
+            if getattr(creation, col.name, None) is not None
+        }
+        stmt = (
+            insert(self.model)
+            .values(values)
+            .on_conflict_do_nothing(
+                index_elements=["data_source_id", "start_datetime", "end_datetime"],
+            )
+            .returning(self.model.id)
+        )
+        return db_session.execute(stmt).scalar_one_or_none()
+
+    def get_by_external_id(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        external_id: str,
+        source: str | None = None,
+        provider: str | None = None,
+    ) -> EventRecord | None:
+        """Find a single EventRecord by its provider-assigned external_id."""
+        query = (
+            db_session.query(self.model)
+            .join(DataSource, self.model.data_source_id == DataSource.id)
+            .filter(DataSource.user_id == user_id, self.model.external_id == external_id)
+        )
+        if source is not None:
+            query = query.filter(DataSource.source == source)
+        if provider is not None:
+            query = query.filter(DataSource.provider == provider)
+        return query.one_or_none()
+
+    def delete_by_external_id(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        external_id: str,
+        source: str | None = None,
+        provider: str | None = None,
+    ) -> int:
+        """Delete EventRecord(s) matching external_id for a user in a single query.
+
+        Returns the number of rows deleted.
+        """
+        source_ids_query = db_session.query(DataSource.id).filter(DataSource.user_id == user_id)
+        if source is not None:
+            source_ids_query = source_ids_query.filter(DataSource.source == source)
+        if provider is not None:
+            source_ids_query = source_ids_query.filter(DataSource.provider == provider)
+
+        deleted = (
+            db_session.query(self.model)
+            .filter(
+                self.model.external_id == external_id,
+                self.model.data_source_id.in_(source_ids_query.scalar_subquery()),
+            )
+            .delete(synchronize_session=False)
+        )
+        db_session.commit()
+        return deleted
+
     @handle_exceptions
     def create(self, db_session: DbSession, creator: EventRecordCreate) -> EventRecord:
         data_source_id, creation = self._build_creation(db_session, creator)
-        try:
-            db_session.add(creation)
+        inserted_id = self._upsert_returning(db_session, creation)
+        if inserted_id is not None:
             db_session.commit()
-            db_session.refresh(creation)
-            return creation
-        except IntegrityError:
-            db_session.rollback()
-            if existing := self._fetch_existing(db_session, data_source_id, creation):
-                return existing
-            raise
+            return db_session.query(self.model).filter(self.model.id == inserted_id).one()
+        # Conflict — return the existing row.
+        if existing := self._fetch_existing(db_session, data_source_id, creation):
+            return existing
+        raise IntegrityError(
+            "ON CONFLICT skipped insert but no existing event_record row matched",
+            None,
+            Exception("missing existing row after ON CONFLICT"),
+        )
 
     def create_and_flush(self, db_session: DbSession, creator: EventRecordCreate) -> EventRecord:
         """Like create() but flushes instead of committing; caller is responsible for the commit.
 
-        Uses a savepoint for IntegrityError handling so a conflict rolls back only
-        the INSERT and leaves the outer transaction intact.
+        Uses ``INSERT ... ON CONFLICT DO NOTHING`` so a duplicate
+        ``(data_source_id, start_datetime, end_datetime)`` doesn't trigger a
+        Postgres ERROR log entry.
         """
         data_source_id, creation = self._build_creation(db_session, creator)
-        nested = db_session.begin_nested()
-        try:
-            db_session.add(creation)
-            db_session.flush()
-            nested.commit()
-            return creation
-        except IntegrityError:
-            nested.rollback()
-            if existing := self._fetch_existing(db_session, data_source_id, creation):
-                return existing
-            raise
+        inserted_id = self._upsert_returning(db_session, creation)
+        if inserted_id is not None:
+            return db_session.query(self.model).filter(self.model.id == inserted_id).one()
+        if existing := self._fetch_existing(db_session, data_source_id, creation):
+            return existing
+        raise IntegrityError(
+            "ON CONFLICT skipped insert but no existing event_record row matched",
+            None,
+            Exception("missing existing row after ON CONFLICT"),
+        )
 
     @handle_exceptions
     def bulk_create(
@@ -280,7 +354,7 @@ class EventRecordRepository(
                 limit = query_params.limit or 20
                 results = query.limit(limit + 1).all()
                 # Reverse to get correct order
-                return list(reversed(results)), total_count
+                return list(reversed(results)), total_count  # ty:ignore[invalid-return-type]
 
             # Forward pagination: get items AFTER cursor
             if sort_by == "start_datetime":
@@ -304,7 +378,7 @@ class EventRecordRepository(
         if not query_params.cursor and query_params.offset:
             query = query.offset(query_params.offset)
 
-        return query.limit(limit + 1).all(), total_count
+        return query.limit(limit + 1).all(), total_count  # ty:ignore[invalid-return-type]
 
     def get_user_event_counts_by_provider(
         self, db_session: DbSession, user_id: UUID
@@ -422,9 +496,11 @@ class EventRecordRepository(
         # is_nap can be True, False, or NULL - we treat NULL as "not a nap"
         is_main_sleep = func.coalesce(SleepDetails.is_nap, False) == False  # noqa: E712
 
-        # Local calendar date the session started — mirrors score date logic in fill_missing_sleep_scores_task.
+        # Local calendar date the session ended (wake-up date) — mirrors score
+        # date logic in fill_missing_sleep_scores_task so chart, score, and
+        # session list all key on the same date.
         local_sleep_date = cast(
-            EventRecord.start_datetime + cast(func.coalesce(EventRecord.zone_offset, "+00:00"), Interval),
+            EventRecord.end_datetime + cast(func.coalesce(EventRecord.zone_offset, "+00:00"), Interval),
             Date,
         )
 
@@ -494,7 +570,7 @@ class EventRecordRepository(
             .filter(
                 DataSource.user_id == user_id,
                 EventRecord.category == "sleep",
-                EventRecord.end_datetime >= start_date,
+                EventRecord.end_datetime >= start_date - timedelta(days=1),
                 local_sleep_date >= cast(start_date, Date),
                 local_sleep_date < cast(end_date, Date),
             )
@@ -593,9 +669,14 @@ class EventRecordRepository(
         - workout_date, source, device_model
         - elevation_meters, distance_meters, energy_burned_kcal
         """
+        local_workout_date = cast(
+            self.model.end_datetime + cast(func.coalesce(self.model.zone_offset, "+00:00"), Interval),
+            Date,
+        )
+
         results = (
             db_session.query(
-                cast(self.model.end_datetime, Date).label("workout_date"),
+                local_workout_date.label("workout_date"),
                 DataSource.source,
                 DataSource.device_model,
                 # Sum elevation gain for all workouts on that day
@@ -611,15 +692,16 @@ class EventRecordRepository(
             .filter(
                 DataSource.user_id == user_id,
                 self.model.category == "workout",
-                self.model.end_datetime >= start_date,
-                cast(self.model.end_datetime, Date) < cast(end_date, Date),
+                self.model.end_datetime >= start_date - timedelta(days=1),
+                local_workout_date >= cast(start_date, Date),
+                local_workout_date < cast(end_date, Date),
             )
             .group_by(
-                cast(self.model.end_datetime, Date),
+                local_workout_date,
                 DataSource.source,
                 DataSource.device_model,
             )
-            .order_by(asc(cast(self.model.end_datetime, Date)))
+            .order_by(asc(local_workout_date))
             .all()
         )
 

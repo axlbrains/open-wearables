@@ -131,7 +131,13 @@ resource "google_cloud_run_v2_service" "backend_api" {
       }
 
       resources {
-        limits = var.backend_api_resource_limits
+        # cpu_idle=false (CPU always allocated) so container stdout/stderr is
+        # reliably shipped to Cloud Logging. With cpu_idle=true a low-traffic
+        # instance is CPU-throttled the moment a request finishes, before the
+        # log-export pipeline flushes — silently dropping all app logs
+        # (only Cloud Run request logs survive). See axlbrains/open-wearables#22.
+        cpu_idle = false
+        limits   = var.backend_api_resource_limits
       }
 
       dynamic "env" {
@@ -166,6 +172,12 @@ resource "google_cloud_run_v2_service" "backend_api" {
   }
 
   lifecycle {
+    # Prod images are deployed manually with semver tags (no Cloud Build triggers).
+    # Without this, every infra `terraform apply` reverts the running image to the
+    # var.backend_image pin (sourced from the TFVARS_PROD secret, which lags the
+    # manual line) — silently rolling prod back. See CLAUDE.md "Prod infra".
+    ignore_changes = [template[0].containers[0].image]
+
     precondition {
       condition     = var.backend_image != null
       error_message = "backend_image must be set when enable_backend_api_service is true."
@@ -228,7 +240,11 @@ resource "google_cloud_run_v2_service" "backend_worker" {
       }
 
       resources {
-        limits = var.backend_worker_resource_limits
+        # cpu_idle=false: same rationale as the API service — keep CPU allocated
+        # so worker stdout/stderr reaches Cloud Logging instead of being dropped
+        # when the instance idles. See axlbrains/open-wearables#22.
+        cpu_idle = false
+        limits   = var.backend_worker_resource_limits
       }
 
       dynamic "env" {
@@ -263,6 +279,9 @@ resource "google_cloud_run_v2_service" "backend_worker" {
   }
 
   lifecycle {
+    # See backend_api: keep Terraform from reverting the manually-deployed image.
+    ignore_changes = [template[0].containers[0].image]
+
     precondition {
       condition     = var.backend_image != null
       error_message = "backend_image must be set when enable_worker_service is true."
@@ -351,6 +370,10 @@ resource "google_cloud_run_v2_job" "backend_init" {
   }
 
   lifecycle {
+    # See backend_api: keep Terraform from reverting the manually-deployed image
+    # (note the extra template nesting for a Cloud Run v2 Job).
+    ignore_changes = [template[0].template[0].containers[0].image]
+
     precondition {
       condition     = var.backend_image != null
       error_message = "backend_image must be set when enable_backend_init_job is true."
@@ -391,7 +414,8 @@ resource "google_cloud_run_v2_service" "frontend" {
       }
 
       resources {
-        limits = var.frontend_resource_limits
+        cpu_idle = true
+        limits   = var.frontend_resource_limits
       }
 
       dynamic "env" {

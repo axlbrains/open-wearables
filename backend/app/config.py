@@ -34,6 +34,11 @@ class Settings(BaseSettings):
 
     # API SETTINGS
     api_name: str = "Open Wearables API"
+    # Real build version, injected at image build time via the APP_VERSION build arg
+    # (see backend/Dockerfile + cloudbuild.yaml). Surfaced on GET /health and as
+    # FastAPI's info.version. Defaults to "dev" for local / non-built runs.
+    app_version: str = "dev"
+    api_port: int = 8000
     api_v1: str = "/api/v1"
     api_latest: str = api_v1
     paging_limit: int = 100
@@ -108,6 +113,11 @@ class Settings(BaseSettings):
     # Will default to false in a future release.
     historical_sync_on_connect: bool = True
 
+    # Whether to ingest per-second workout samples (speed, cadence, power, GPS, etc.) into
+    # data_point_series on workout webhook arrival. Significantly increases DB storage.
+    # Per-provider granularity will be added via ProviderSetting in a future release.
+    ingest_workout_samples: bool = False
+
     # SCORE SETTINGS
     score_backfill_days: int = 30  # How far back the missing-score query looks
     sleep_score_interval_seconds: int = 600  # How often to run the fill-missing-scores task (default: 10 min)
@@ -124,6 +134,8 @@ class Settings(BaseSettings):
     suunto_redirect_uri: str | None = None  # Deprecated: use API_BASE_URL
     suunto_subscription_key: SecretStr | None = None
     suunto_default_scope: str = ""
+    suunto_webhook_secret: SecretStr | None = None
+    # Derived from secret_key if not set — configure the same value in Suunto developer portal.
 
     # GARMIN OAUTH SETTINGS
     garmin_client_id: str | None = None
@@ -161,7 +173,8 @@ class Settings(BaseSettings):
     strava_client_secret: SecretStr | None = None
     strava_redirect_uri: str | None = None  # Deprecated: use API_BASE_URL
     strava_default_scope: str = "activity:read_all,profile:read_all"
-    strava_webhook_verify_token: str = "open-wearables-strava-verify"
+    strava_webhook_verify_token: SecretStr | None = None
+    strava_webhook_signature_tolerance_seconds: int = Field(300, ge=0)
     # Strava API max is 200 activities per page
     strava_events_per_page: int = 200
 
@@ -210,6 +223,27 @@ class Settings(BaseSettings):
     def derive_svix_jwt_secret(self) -> "Settings":
         if self.svix_jwt_secret is None or self.svix_jwt_secret.get_secret_value() == "":
             self.svix_jwt_secret = SecretStr(self.secret_key)
+        return self
+
+    @model_validator(mode="after")
+    def derive_suunto_webhook_secret(self) -> "Settings":
+        if self.suunto_webhook_secret is None or self.suunto_webhook_secret.get_secret_value() == "":
+            self.suunto_webhook_secret = SecretStr(self.secret_key)
+        return self
+
+    @model_validator(mode="after")
+    def derive_strava_webhook_verify_token(self) -> "Settings":
+        if self.strava_webhook_verify_token is None or self.strava_webhook_verify_token.get_secret_value() == "":
+            self.strava_webhook_verify_token = SecretStr(self.secret_key)
+        return self
+
+    @model_validator(mode="after")
+    def derive_oura_webhook_verification_token(self) -> "Settings":
+        if (
+            self.oura_webhook_verification_token is None
+            or self.oura_webhook_verification_token.get_secret_value() == ""
+        ):
+            self.oura_webhook_verification_token = SecretStr(self.secret_key)
         return self
 
     @field_validator("cors_origins", mode="after")
@@ -290,7 +324,7 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def _get_settings() -> Settings:
-    return Settings()  # type: ignore[call-arg]
+    return Settings()  # ty: ignore[missing-argument]
 
 
 settings = _get_settings()

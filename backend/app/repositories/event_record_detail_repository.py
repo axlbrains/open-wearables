@@ -48,11 +48,12 @@ class EventRecordDetailRepository(
         creator: EventRecordDetailCreate,
         detail_type: DetailType = "workout",
     ) -> EventRecordDetail:
-        """Create a detail record using the appropriate polymorphic model."""
-        detail = self._build_detail(creator, detail_type)
-        db_session.add(detail)
+        """Create a detail record, upserting on conflict by ``record_id``."""
+        self.bulk_create(db_session, [creator], detail_type=detail_type)
         db_session.commit()
-        db_session.refresh(detail)
+        detail = self.get_by_record_id(db_session, creator.record_id)
+        if detail is None:
+            raise RuntimeError(f"Upsert succeeded but detail for record_id={creator.record_id} not found")
         return detail
 
     def create_and_flush(
@@ -61,10 +62,17 @@ class EventRecordDetailRepository(
         creator: EventRecordDetailCreate,
         detail_type: DetailType = "workout",
     ) -> EventRecordDetail:
-        """Like create() but flushes instead of committing; caller is responsible for the commit."""
-        detail = self._build_detail(creator, detail_type)
-        db_session.add(detail)
-        db_session.flush()
+        """Like create() but flushes instead of committing; caller is responsible for the commit.
+
+        Routes through ``bulk_create`` so the underlying ``INSERT ... ON CONFLICT
+        DO NOTHING/UPDATE`` is used. A duplicate ``record_id`` no longer raises
+        IntegrityError (and Postgres no longer logs an ERROR); instead the
+        existing child-table row gets its fields refreshed.
+        """
+        self.bulk_create(db_session, [creator], detail_type=detail_type)
+        detail = self.get_by_record_id(db_session, creator.record_id)
+        if detail is None:
+            raise RuntimeError(f"Upsert succeeded but detail for record_id={creator.record_id} not found")
         return detail
 
     @handle_exceptions
@@ -79,6 +87,9 @@ class EventRecordDetailRepository(
         For joined table inheritance, we need to insert into both the base table
         (event_record_detail) and the child table (workout_details/sleep_details).
         """
+        if detail_type not in ("workout", "sleep"):
+            raise ValueError(f"Unknown detail type: {detail_type}")
+
         if not creators:
             return
 
@@ -113,7 +124,7 @@ class EventRecordDetailRepository(
             data = creator.model_dump()
             # Serialize sleep_stages datetimes to ISO strings for JSONB storage
             if detail_type == "sleep" and data.get("sleep_stages"):
-                data["sleep_stages"] = [s.model_dump(mode="json") for s in creator.sleep_stages]  # type: ignore[union-attr]
+                data["sleep_stages"] = [s.model_dump(mode="json") for s in creator.sleep_stages]  # ty:ignore[not-iterable]
             # Filter to keep only columns present in the target model
             filtered_data = {k: v for k, v in data.items() if k in valid_columns}
             child_values.append(filtered_data)

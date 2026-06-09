@@ -3,9 +3,10 @@
 from logging import getLogger
 from uuid import UUID
 
+from celery import shared_task
+
 from app.database import SessionLocal
 from app.services.csv_import import csv_import_service
-from celery import shared_task
 
 logger = getLogger(__name__)
 

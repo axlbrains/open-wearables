@@ -97,6 +97,18 @@ variable "create_cloud_sql" {
   default     = true
 }
 
+variable "cloud_sql_tier" {
+  description = "Cloud SQL machine type for the OW DB."
+  type        = string
+  default     = "db-f1-micro"
+}
+
+variable "cloud_sql_disk_size_gb" {
+  description = "Cloud SQL disk size in GB for the OW DB."
+  type        = number
+  default     = 10
+}
+
 variable "create_vpc_connector" {
   description = "Whether to create a VPC access connector."
   type        = bool
@@ -326,13 +338,25 @@ variable "service_account_project_roles" {
 }
 
 variable "backend_api_min_instances" {
-  description = "Minimum instance count for the backend API service."
+  description = "Minimum instance count for the backend API service (avoid cold starts on the public path)."
+  type        = number
+  default     = 0
+}
+
+variable "backend_worker_min_instances" {
+  description = "Minimum instance count for the worker service."
+  type        = number
+  default     = 0
+}
+
+variable "frontend_min_instances" {
+  description = "Minimum instance count for the frontend service."
   type        = number
   default     = 0
 }
 
 variable "backend_vpc_egress" {
-  description = "VPC egress setting for backend services."
+  description = "VPC egress mode for backend services. Use PRIVATE_RANGES_ONLY when only Cloud SQL / Memorystore needs the connector; ALL_TRAFFIC routes everything through the connector."
   type        = string
   default     = "ALL_TRAFFIC"
 }

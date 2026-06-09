@@ -1,6 +1,8 @@
 import httpx
 
-_GOOGLE_METADATA_TOKEN_URL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+_GOOGLE_METADATA_TOKEN_URL = (
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+)
 _GOOGLE_METADATA_HEADERS = {"Metadata-Flavor": "Google"}
 
 

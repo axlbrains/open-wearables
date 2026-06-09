@@ -3,6 +3,7 @@ from datetime import date, datetime, timezone
 from logging import getLogger
 from uuid import UUID, uuid4
 
+from celery import shared_task
 from sqlalchemy import text
 
 from app.algorithms.config_algorithms import resilience_config
@@ -14,7 +15,6 @@ from app.services.health_score_service import health_score_service
 from app.services.scores.resilience_service import resilience_score_service
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
-from celery import shared_task
 
 logger = getLogger(__name__)
 
@@ -52,7 +52,7 @@ _MISSING_RESILIENCE_SCORES_QUERY = text("""
 
 
 @shared_task
-def fill_missing_resilience_scores() -> dict:
+def fill_missing_resilience_scores() -> dict[str, int]:
     """Find (user, date) pairs without an OW resilience score and calculate them.
 
     Runs frequently so scores appear shortly after any sync path that delivers
@@ -117,6 +117,7 @@ def fill_missing_resilience_scores() -> dict:
                     components={
                         "days_counted": ScoreComponent(value=result.days_counted),
                         "metric_type": ScoreComponent(qualifier=result.metric_type),
+                        "resilience_score": ScoreComponent(value=result.resilience_score),
                     },
                 )
                 for ref_date, result in scores_by_date.items()

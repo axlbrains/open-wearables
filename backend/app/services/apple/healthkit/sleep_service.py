@@ -1,17 +1,19 @@
 import contextlib
 import json
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from logging import getLogger
 from uuid import UUID, uuid4
 
 from app.config import settings
-from app.constants.series_types.apple import (
+from app.constants.series_types.sdk import (
     SleepPhase,
     get_apple_sleep_phase,
 )
 from app.constants.sleep import SleepStageType
 from app.database import DbSession
 from app.integrations.redis_client import get_redis_client
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -125,12 +127,20 @@ def _apply_transition(
 ) -> SleepState:
     """Apply a transition to the sleep state."""
 
-    last_start_timestamp = state.last_start_timestamp
-    last_end_timestamp = state.last_end_timestamp
-
-    delta_seconds = min(
-        abs((start_time - last_start_timestamp).total_seconds()), abs((end_time - last_end_timestamp).total_seconds())
-    )
+    # Compute the gap using session boundaries (start_time / end_time) rather than
+    # the timestamps of the last-processed sample.  This correctly handles payloads
+    # that arrive out of chronological order: a sample that chains directly onto an
+    # earlier part of the night will have a near-zero distance to the session window
+    # even if it was enqueued after a later-night payload was already processed.
+    if start_time <= state.end_time and end_time >= state.start_time:
+        # New sample overlaps with the current session window → same session.
+        delta_seconds = 0.0
+    elif end_time <= state.start_time:
+        # New sample is entirely before the session start.
+        delta_seconds = (state.start_time - end_time).total_seconds()
+    else:
+        # New sample is entirely after the session end.
+        delta_seconds = (start_time - state.end_time).total_seconds()
 
     if delta_seconds > settings.sleep_end_gap_minutes * 60:
         finish_sleep(db_session, user_id, state)
@@ -195,8 +205,15 @@ def handle_sleep_data(
     Sleep sessions are tracked in Redis and automatically finalized to the database when
     a gap of more than 2 hours (configurable) is detected between consecutive sleep records.
 
-    Handles bidirectional gaps between records - the service works fine whether the SDK
-    sends records in chronological order or reverse chronological order.
+    A per-user Redis lock serializes concurrent calls so that parallel Celery tasks
+    (e.g. from a bulk historical upload) accumulate stages into the same session instead
+    of overwriting each other's state.
+
+    Stale detection uses ``end_time`` (the last sleep-sample timestamp).  When a bulk
+    historical upload finalizes a session whose ``end_time`` is in the past, the new
+    session is merged with any adjacent record already in the database, so consecutive
+    payloads within the same night are combined into a single session rather than being
+    stored as separate fragments.
 
     Args:
         db_session: Database session for persisting finalized sleep records
@@ -204,81 +221,102 @@ def handle_sleep_data(
         user_id: User identifier for associating sleep data
 
     Flow:
+        - Acquire a per-user Redis lock to prevent concurrent state corruption
         - Deduplicate incoming data based on start/end/stage/source
         - If no active session exists: Create new session in Redis (only for valid start states)
-        - If active session exists: Check gap between last record's end and current record's start
+        - If active session exists: Check gap between new sample and the session window
           * Gap > 2 hours: Finalize existing session, start new one
           * Otherwise: Accumulate sleep stage durations in existing session
+        - Persist state once after the whole batch; dispatch the stale-sleep task
     """
-    current_state = load_sleep_state(user_id)
-    provider = request.provider
+    redis_client = get_redis_client()
+    lock = redis_client.lock(f"sleep:lock:{user_id}", timeout=30, blocking_timeout=15)
 
-    # Deduplicate and sort
-    seen = set()
-    unique_data = []
+    try:
+        acquired = lock.acquire()
+        if not acquired:
+            logger.warning("Could not acquire sleep processing lock for user %s; skipping batch", user_id)
+            return
 
-    # Sort first by startDate to ensure chronological processing
-    sorted_raw = sorted(request.data.sleep, key=lambda x: x.startDate)
+        current_state = load_sleep_state(user_id)
+        provider = request.provider
 
-    for item in sorted_raw:
-        # Create a unique key for deduplication
-        # SourceInfo is not hashable, use JSON dump
-        source_key = item.source.model_dump_json() if item.source else None
-        key_tuple = (item.startDate, item.endDate, item.stage, source_key)
+        # Deduplicate and sort
+        seen = set()
+        unique_data = []
 
-        if key_tuple not in seen:
-            seen.add(key_tuple)
-            unique_data.append(item)
+        # Sort first by startDate to ensure chronological processing
+        sorted_raw = sorted(request.data.sleep, key=lambda x: x.startDate)
 
-    for sjson in unique_data:
-        # Extract device info
-        device_model, software_version, original_source_name = extract_device_info(sjson.source)
+        for item in sorted_raw:
+            # Create a unique key for deduplication
+            # SourceInfo is not hashable, use JSON dump
+            source_key = item.source.model_dump_json() if item.source else None
+            key_tuple = (item.startDate, item.endDate, item.stage, source_key)
 
-        sleep_phase = get_apple_sleep_phase(sjson.stage)
+            if key_tuple not in seen:
+                seen.add(key_tuple)
+                unique_data.append(item)
 
-        if sleep_phase is None:
-            continue
+        for sjson in unique_data:
+            # Extract device info
+            device_model, software_version, original_source_name = extract_device_info(sjson.source)
 
-        if not current_state:
-            if sleep_phase not in SLEEP_START_STATES:
+            sleep_phase = get_apple_sleep_phase(sjson.stage)
+
+            if sleep_phase is None:
                 continue
 
-            current_state = _create_new_sleep_state(
-                sjson.startDate, sjson.endDate, sjson.id, provider, original_source_name, device_model, sjson.zoneOffset
+            if not current_state:
+                if sleep_phase not in SLEEP_START_STATES:
+                    continue
+
+                current_state = _create_new_sleep_state(
+                    sjson.startDate,
+                    sjson.endDate,
+                    sjson.id,
+                    provider,
+                    original_source_name,
+                    device_model,
+                    sjson.zoneOffset,
+                )
+
+            current_state = _apply_transition(
+                db_session,
+                user_id,
+                current_state,
+                sleep_phase,
+                sjson.startDate,
+                sjson.endDate,
+                provider,
+                sjson.id,
+                original_source_name,
+                device_model,
+                sjson.zoneOffset,
             )
 
-        current_state = _apply_transition(
-            db_session,
-            user_id,
-            current_state,
-            sleep_phase,
-            sjson.startDate,
-            sjson.endDate,
-            provider,
-            sjson.id,
-            original_source_name,
-            device_model,
-            sjson.zoneOffset,
-        )
-        save_sleep_state(user_id, current_state)
+        # Persist the accumulated state to Redis only once after processing the entire batch
+        if current_state:
+            save_sleep_state(user_id, current_state)
 
-    # Finalize the remaining session synchronously if it is already stale.
-    # With chronological sorting, the most recent night is always processed last
-    # and left in Redis. If it ended more than sleep_end_gap_minutes ago it can
-    # be persisted right away instead of waiting for the periodic Celery beat.
-    if current_state:
-        end_time = current_state.end_time
-        if end_time.tzinfo is None:
-            end_time = end_time.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        if now - end_time >= timedelta(minutes=settings.sleep_end_gap_minutes):
-            finish_sleep(db_session, user_id, current_state)
-            current_state = None
+        # Finalise synchronously if the session is already stale.  Historical
+        # uploads have end_time far in the past so this fires immediately, but
+        # finish_sleep now merges the result with any adjacent record already in
+        # the DB — so each payload extends the growing record rather than
+        # creating a separate session.
+        if current_state:
+            session_end = current_state.end_time
+            if session_end.tzinfo is None:
+                session_end = session_end.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - session_end >= timedelta(minutes=settings.sleep_end_gap_minutes):
+                finish_sleep(db_session, user_id, current_state)
 
-    # Dispatch async task for any other active users or if this session
-    # was too fresh to finalize synchronously above.
-    from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
+    finally:
+        with contextlib.suppress(Exception):
+            lock.release()
 
+    # Dispatch the stale-sleep task so sessions that have gone quiet (including
+    # other users' sessions) are finalised promptly without waiting for the next beat.
     dispatch_task(RegisteredTask.FINALIZE_STALE_SLEEPS)
 
 
@@ -361,10 +399,10 @@ def _calculate_final_metrics(stages: list[SleepStateStage]) -> tuple[dict, list[
                 current_end = end
                 continue
 
-            if start < current_end:
-                current_end = max(current_end, end)
+            if start < current_end:  # ty:ignore[unsupported-operator]
+                current_end = max(current_end, end)  # ty:ignore[invalid-argument-type]
             else:
-                metrics["in_bed_seconds"] += (current_end - current_start).total_seconds()
+                metrics["in_bed_seconds"] += (current_end - current_start).total_seconds()  # ty:ignore[unsupported-operator]
                 current_start = start
                 current_end = end
 
@@ -383,7 +421,17 @@ def _calculate_final_metrics(stages: list[SleepStateStage]) -> tuple[dict, list[
 
 
 def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None:
-    """Finish a sleep session and save the record to the database."""
+    """Finish a sleep session and save the record to the database.
+
+    Before creating a new record the function checks whether an existing adjacent
+    sleep session is already in the database (gap ≤ ``sleep_end_gap_minutes``).
+    When found, the two sessions are merged: the existing record is deleted and a
+    new record is created from the combined stages.  This handles the Apple SDK
+    pattern of sending one night's sleep as many consecutive small payloads — each
+    payload is finalized immediately (historical data is available right away) and
+    each merge step extends the accumulated DB record until the whole night is
+    represented as a single session.
+    """
 
     # Recalculate metrics from stages to handle overlaps/duplicates
     # state.stages is a list[SleepStateStage]
@@ -436,6 +484,10 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
     total_sleep_seconds = (
         metrics["sleeping_seconds"] + metrics["light_seconds"] + metrics["deep_seconds"] + metrics["rem_seconds"]
     )
+    time_in_bed_seconds = max(metrics["in_bed_seconds"], total_sleep_seconds + metrics["awake_seconds"])
+    sleep_efficiency = (
+        Decimal(str(total_sleep_seconds / time_in_bed_seconds * 100)) if time_in_bed_seconds > 0 else None
+    )
 
     sleep_record = EventRecordCreate(
         id=uuid4(),
@@ -456,12 +508,12 @@ def finish_sleep(db_session: DbSession, user_id: str, state: SleepState) -> None
     detail = EventRecordDetailCreate(
         record_id=sleep_record.id,
         sleep_total_duration_minutes=int(total_sleep_seconds // 60),
-        sleep_time_in_bed_minutes=int(metrics["in_bed_seconds"] // 60),
+        sleep_time_in_bed_minutes=int(time_in_bed_seconds // 60),
         sleep_deep_minutes=int(metrics["deep_seconds"] // 60),
         sleep_rem_minutes=int(metrics["rem_seconds"] // 60),
         sleep_light_minutes=int(metrics["light_seconds"] // 60),
         sleep_awake_minutes=int(metrics["awake_seconds"] // 60),
-        sleep_efficiency_score=None,  # TODO: Implement efficiency score
+        sleep_efficiency_score=sleep_efficiency,
         is_nap=False,  # TODO: Infer if nap, maybe from sleep length < 1 hour / 2 hours?
         sleep_stages=cleaned_stages or None,
     )

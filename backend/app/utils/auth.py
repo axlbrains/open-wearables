@@ -1,18 +1,21 @@
+from logging import getLogger
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 
 from app.config import settings
 from app.database import DbSession
 from app.models import Developer
 from app.repositories.developer_repository import DeveloperRepository
 from app.schemas.auth import SDKAuthContext
+from app.utils.structured_logging import log_structured
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 developer_repository = DeveloperRepository(Developer)
+logger = getLogger(__name__)
 
 
 async def get_current_developer(
@@ -110,7 +113,12 @@ async def get_sdk_auth(
     # Import here to avoid circular imports
     from app.services.api_key_service import api_key_service
 
-    # Try SDK user token first
+    # Track WHY auth failed so the final 401 carries a grep-able reason in stdout.
+    # Without this every reject mode collapses into one log-less 401, making it
+    # impossible to tell expired-JWT storms from signature-failures or wrong-scope
+    # tokens (axlbrains/axl-api#138).
+    reject_reason = "missing"
+
     if token:
         try:
             payload = jwt.decode(
@@ -125,14 +133,33 @@ async def get_sdk_auth(
                     user_id=UUID(sub) if sub else None,
                     app_id=payload.get("app_id"),
                 )
+            reject_reason = "bad_scope"
+        except ExpiredSignatureError:
+            reject_reason = "expired"
         except JWTError:
-            pass  # Fall through to API key check
+            reject_reason = "bad_signature"
 
-    # Fall back to API key (backwards compatibility)
     if x_open_wearables_api_key:
-        api_key = api_key_service.validate_api_key(db, x_open_wearables_api_key)
-        return SDKAuthContext(auth_type="api_key", api_key_id=api_key.id)
+        try:
+            api_key = api_key_service.validate_api_key(db, x_open_wearables_api_key)
+            return SDKAuthContext(auth_type="api_key", api_key_id=api_key.id)
+        except HTTPException:
+            log_structured(
+                logger,
+                "warning",
+                "SDK auth rejected",
+                action="sdk_auth_reject",
+                reason="bad_api_key" if reject_reason == "missing" else f"{reject_reason}_then_bad_api_key",
+            )
+            raise  # preserve original "Invalid or missing API key" detail
 
+    log_structured(
+        logger,
+        "warning",
+        "SDK auth rejected",
+        action="sdk_auth_reject",
+        reason=reject_reason,
+    )
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required: provide SDK token or API key",

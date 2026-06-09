@@ -2,6 +2,8 @@ from datetime import datetime
 from logging import Logger, getLogger
 from uuid import UUID
 
+from pydantic import ValidationError
+
 from app.database import DbSession
 from app.models import User
 from app.repositories.user_repository import UserRepository
@@ -86,26 +88,22 @@ class UserService(AppService[UserRepository, User, UserCreateInternal, UserUpdat
         db_session: DbSession,
         query_params: UserQueryParams,
     ) -> OldPaginatedResponse[UserRead]:
-        """Get users with filtering, searching, and pagination.
-
-        Args:
-            db_session: The database session.
-            query_params: The query parameters.
-
-        Returns:
-            A paginated response containing the users and the total count of users.
-        """
-        self.logger.debug(f"Fetching users with pagination: page={query_params.page}, limit={query_params.limit}")
-
         rows, total_count = self.crud.get_users_with_filters(db_session, query_params)
 
-        self.logger.debug(f"Retrieved {len(rows)} users out of {total_count} total")
-
         items = []
-        for user, last_synced_at, last_synced_provider in rows:
-            user_read = UserRead.model_validate(user)
+        for user, last_synced_at, last_synced_provider, has_active_connection in rows:
+            try:
+                user_read = UserRead.model_validate(user)
+            except ValidationError as exc:
+                if not all("email" in e["loc"] for e in exc.errors()):
+                    raise
+                self.logger.warning("Skipping user %s — invalid email: %s", user.id, user.email)
+                total_count -= 1
+                continue
+
             user_read.last_synced_at = last_synced_at
             user_read.last_synced_provider = last_synced_provider
+            user_read.has_active_connection = bool(has_active_connection)
             items.append(user_read)
 
         return OldPaginatedResponse[UserRead](

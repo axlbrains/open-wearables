@@ -34,7 +34,8 @@ def _queue_pull_sync(
     *,
     is_historical: bool = False,
 ) -> Any:
-    """Enqueue a pull-API sync task via the task dispatcher."""
+    """Enqueue a pull-API sync task and return the dispatch handle."""
+    historical = "h" if is_historical else "l"
     return dispatch_task(
         RegisteredTask.SYNC_VENDOR_DATA,
         kwargs={
@@ -44,6 +45,7 @@ def _queue_pull_sync(
             "providers": [provider_value],
             "is_historical": is_historical,
         },
+        dedup_key=f"sync_vendor:{user_id}:{provider_value}:{start_date}:{end_date}:{historical}",
     )
 
 
@@ -117,11 +119,12 @@ def sync_user_data(
     - **Whoop**: Supports workouts and 247 data (sleep/recovery)
 
     **Execution Mode:**
-    - `async=true` (default): Dispatches sync to background Celery worker. Returns immediately with task ID.
+    - `async=true` (default): Dispatches sync to the configured background worker. Returns immediately with task ID.
     - `async=false`: Executes synchronously (may timeout for large data sets).
 
     Requires valid API key and active connection for the user.
     """
+    # Async mode: dispatch to the configured task backend and return immediately
     if run_async:
         # The async worker (sync_vendor_data) always syncs all data types and
         # does not accept per-type or provider-specific flags. Reject requests
@@ -152,11 +155,11 @@ def sync_user_data(
         elif summary_start_time:
             start_date_iso = summary_start_time
 
-        handle = _queue_pull_sync(user_id, provider.value, start_date_iso, summary_end_time)
+        task = _queue_pull_sync(user_id, provider.value, start_date_iso, summary_end_time)
         return {
             "success": True,
             "async": True,
-            "task_id": handle.id,
+            "task_id": task.id,
             "message": f"Sync task queued for {provider.value}. Check task status for results.",
         }
 

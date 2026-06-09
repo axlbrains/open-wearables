@@ -3,7 +3,7 @@
 Covers:
 - WebhookEventType enum (#717)
 - webhook_emit helpers (#719, #721)
-- emit_webhook_event Celery task
+- emit_webhook_event task (dispatched via task_dispatcher)
 - outgoing_webhooks API router (#722-726)
 """
 
@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.integrations.celery.tasks.emit_webhook_event_task import emit_webhook_event
+from app.integrations.task_dispatcher import RegisteredTask
 from app.schemas.webhooks.event_types import EVENT_TYPE_DESCRIPTIONS, WebhookEventType
 from app.services.outgoing_webhooks.events import (
     SVIX_MAX_SAMPLES_PER_EVENT,
@@ -29,6 +30,21 @@ from app.services.outgoing_webhooks.events import (
 )
 from app.utils.security import create_access_token
 from tests.factories import DeveloperFactory
+
+# ---------------------------------------------------------------------------
+# Helpers — outgoing webhook helpers route through dispatch_task now, so
+# extract event_type / payload from the dispatch_task(...) call shape:
+#   dispatch_task(RegisteredTask.EMIT_WEBHOOK_EVENT, args=[event_type, payload], kwargs={...})
+# ---------------------------------------------------------------------------
+
+
+def _event_type_of(call: Any) -> str:
+    return call.kwargs["args"][0]
+
+
+def _payload_of(call: Any) -> dict[str, Any]:
+    return call.kwargs["args"][1]
+
 
 # ---------------------------------------------------------------------------
 # WebhookEventType enum
@@ -51,8 +67,8 @@ class TestWebhookEventTypes:
 
 
 class TestWebhookEmit:
-    @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
-    def test_on_workout_created_dispatches(self, mock_task: MagicMock) -> None:
+    @patch("app.integrations.task_dispatcher.dispatch_task")
+    def test_on_workout_created_dispatches(self, mock_dispatch: MagicMock) -> None:
         uid = uuid4()
         rid = uuid4()
         on_workout_created(
@@ -72,16 +88,18 @@ class TestWebhookEmit:
             elevation_gain_meters=120.0,
             avg_pace_sec_per_km=360,
         )
-        mock_task.delay.assert_called_once()
-        args = mock_task.delay.call_args
-        assert args[0][0] == "workout.created"
-        assert args[0][1]["data"]["source"]["provider"] == "garmin"
-        assert args[0][1]["data"]["calories_kcal"] == 450.0
-        assert args[0][1]["data"]["distance_meters"] == 10000.0
-        assert args[0][1]["data"]["avg_heart_rate_bpm"] == 155
+        mock_dispatch.assert_called_once()
+        call = mock_dispatch.call_args
+        assert call.args[0] == RegisteredTask.EMIT_WEBHOOK_EVENT
+        assert _event_type_of(call) == "workout.created"
+        payload = _payload_of(call)
+        assert payload["data"]["source"]["provider"] == "garmin"
+        assert payload["data"]["calories_kcal"] == 450.0
+        assert payload["data"]["distance_meters"] == 10000.0
+        assert payload["data"]["avg_heart_rate_bpm"] == 155
 
-    @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
-    def test_on_sleep_created_dispatches(self, mock_task: MagicMock) -> None:
+    @patch("app.integrations.task_dispatcher.dispatch_task")
+    def test_on_sleep_created_dispatches(self, mock_dispatch: MagicMock) -> None:
         uid = uuid4()
         rid = uuid4()
         on_sleep_created(
@@ -97,14 +115,15 @@ class TestWebhookEmit:
             stages={"deep_minutes": 90, "rem_minutes": 60, "light_minutes": 120, "awake_minutes": 10},
             is_nap=False,
         )
-        mock_task.delay.assert_called_once()
-        args = mock_task.delay.call_args
-        assert args[0][0] == "sleep.created"
-        assert args[0][1]["data"]["efficiency_percent"] == 85.0
-        assert args[0][1]["data"]["stages"]["deep_minutes"] == 90
+        mock_dispatch.assert_called_once()
+        call = mock_dispatch.call_args
+        assert _event_type_of(call) == "sleep.created"
+        payload = _payload_of(call)
+        assert payload["data"]["efficiency_percent"] == 85.0
+        assert payload["data"]["stages"]["deep_minutes"] == 90
 
-    @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
-    def test_on_timeseries_batch_saved_dispatches(self, mock_task: MagicMock) -> None:
+    @patch("app.integrations.task_dispatcher.dispatch_task")
+    def test_on_timeseries_batch_saved_dispatches(self, mock_dispatch: MagicMock) -> None:
         uid = uuid4()
         samples = [
             {
@@ -133,15 +152,14 @@ class TestWebhookEmit:
             end_time="2026-04-16T06:05:00+00:00",
             samples=samples,
         )
-        mock_task.delay.assert_called()
-        assert mock_task.delay.call_count == 2
-        calls = {c[0][0] for c in mock_task.delay.call_args_list}
+        mock_dispatch.assert_called()
+        assert mock_dispatch.call_count == 2
+        calls = {_event_type_of(c) for c in mock_dispatch.call_args_list}
         assert "heart_rate.created" in calls
         assert "series.heart_rate.created" in calls
         # validate payload on the group event
-        group_call = next(c for c in mock_task.delay.call_args_list if c[0][0] == "heart_rate.created")
-        args = group_call
-        data = args[0][1]["data"]
+        group_call = next(c for c in mock_dispatch.call_args_list if _event_type_of(c) == "heart_rate.created")
+        data = _payload_of(group_call)["data"]
         assert data["start_time"] == "2026-04-16T06:00:00+00:00"
         assert data["end_time"] == "2026-04-16T06:05:00+00:00"
         assert len(data["samples"]) == 2
@@ -149,8 +167,8 @@ class TestWebhookEmit:
         assert data["samples"][1]["value"] == 65.0
         assert "chunk_index" not in data
 
-    @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
-    def test_on_timeseries_batch_saved_without_samples(self, mock_task: MagicMock) -> None:
+    @patch("app.integrations.task_dispatcher.dispatch_task")
+    def test_on_timeseries_batch_saved_without_samples(self, mock_dispatch: MagicMock) -> None:
         """Backward-compatible call without samples still dispatches correctly."""
         uid = uuid4()
         on_timeseries_batch_saved(
@@ -159,17 +177,17 @@ class TestWebhookEmit:
             series_type="heart_rate",
             sample_count=100,
         )
-        assert mock_task.delay.call_count == 2
-        calls = {c[0][0] for c in mock_task.delay.call_args_list}
+        assert mock_dispatch.call_count == 2
+        calls = {_event_type_of(c) for c in mock_dispatch.call_args_list}
         assert "heart_rate.created" in calls
         assert "series.heart_rate.created" in calls
-        group_call = next(c for c in mock_task.delay.call_args_list if c[0][0] == "heart_rate.created")
-        data = group_call[0][1]["data"]
+        group_call = next(c for c in mock_dispatch.call_args_list if _event_type_of(c) == "heart_rate.created")
+        data = _payload_of(group_call)["data"]
         assert data["samples"] == []
         assert data["sample_count"] == 100
 
-    @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
-    def test_on_timeseries_batch_saved_chunks_large_payload(self, mock_task: MagicMock) -> None:
+    @patch("app.integrations.task_dispatcher.dispatch_task")
+    def test_on_timeseries_batch_saved_chunks_large_payload(self, mock_dispatch: MagicMock) -> None:
         """Batches exceeding SVIX_MAX_SAMPLES_PER_EVENT are split into chunk events."""
         uid = uuid4()
         large_samples = [
@@ -193,11 +211,11 @@ class TestWebhookEmit:
             samples=large_samples,
         )
         # 2 chunks × 2 event types (group + granular) = 4 calls
-        assert mock_task.delay.call_count == 4
-        group_calls = [c for c in mock_task.delay.call_args_list if c[0][0] == "heart_rate.created"]
+        assert mock_dispatch.call_count == 4
+        group_calls = [c for c in mock_dispatch.call_args_list if _event_type_of(c) == "heart_rate.created"]
         assert len(group_calls) == 2
-        first_data = group_calls[0][0][1]["data"]
-        second_data = group_calls[1][0][1]["data"]
+        first_data = _payload_of(group_calls[0])["data"]
+        second_data = _payload_of(group_calls[1])["data"]
         assert first_data["chunk_index"] == 0
         assert first_data["total_chunks"] == 2
         assert second_data["chunk_index"] == 1
@@ -208,8 +226,8 @@ class TestWebhookEmit:
         assert first_data["sample_count"] == len(large_samples)
         assert second_data["sample_count"] == len(large_samples)
 
-    @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
-    def test_on_timeseries_skips_unmapped_series_type(self, mock_task: MagicMock) -> None:
+    @patch("app.integrations.task_dispatcher.dispatch_task")
+    def test_on_timeseries_skips_unmapped_series_type(self, mock_dispatch: MagicMock) -> None:
         uid = uuid4()
         on_timeseries_batch_saved(
             user_id=uid,
@@ -217,10 +235,10 @@ class TestWebhookEmit:
             series_type="unknown_type_xyz",
             sample_count=5,
         )
-        mock_task.delay.assert_not_called()
+        mock_dispatch.assert_not_called()
 
-    @patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event")
-    def test_on_connection_created_dispatches(self, mock_task: MagicMock) -> None:
+    @patch("app.integrations.task_dispatcher.dispatch_task")
+    def test_on_connection_created_dispatches(self, mock_dispatch: MagicMock) -> None:
         uid = uuid4()
         cid = uuid4()
         on_connection_created(
@@ -229,19 +247,18 @@ class TestWebhookEmit:
             connection_id=cid,
             connected_at="2026-01-01T12:00:00+00:00",
         )
-        mock_task.delay.assert_called_once()
-        args = mock_task.delay.call_args
-        assert args[0][0] == "connection.created"
-        assert args[0][1]["data"]["provider"] == "garmin"
-        assert args[0][1]["data"]["connection_id"] == str(cid)
+        mock_dispatch.assert_called_once()
+        call = mock_dispatch.call_args
+        assert _event_type_of(call) == "connection.created"
+        payload = _payload_of(call)
+        assert payload["data"]["provider"] == "garmin"
+        assert payload["data"]["connection_id"] == str(cid)
 
     def test_dispatch_swallows_broker_error(self) -> None:
-        """_dispatch silently drops the event when Celery is unreachable."""
+        """_dispatch silently drops the event when the dispatcher backend fails."""
 
-        with patch(
-            "app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event",
-        ) as mock_task:
-            mock_task.delay.side_effect = ConnectionError("Redis not available")
+        with patch("app.integrations.task_dispatcher.dispatch_task") as mock_dispatch:
+            mock_dispatch.side_effect = ConnectionError("Redis not available")
             # Should NOT raise
             _dispatch("workout.created", {"type": "workout.created", "data": {}})
 

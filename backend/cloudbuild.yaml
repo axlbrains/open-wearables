@@ -1,7 +1,7 @@
 steps:
   # Build backend image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${SHORT_SHA}', '-f', 'backend/Dockerfile', 'backend']
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:${SHORT_SHA}', '--build-arg', 'APP_VERSION=${SHORT_SHA}', '-f', 'backend/Dockerfile', 'backend']
 
   # Push to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'

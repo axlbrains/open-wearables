@@ -1,11 +1,12 @@
 from logging import getLogger
 
+from celery import shared_task
+
 from app.database import SessionLocal
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.responses.upload import SyncAllUsersResult
 from app.utils.structured_logging import log_structured
-from celery import shared_task
 
 logger = getLogger(__name__)
 

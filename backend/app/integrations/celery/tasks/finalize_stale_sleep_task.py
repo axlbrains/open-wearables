@@ -1,6 +1,10 @@
 import contextlib
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
+from typing import cast
+
+import redis.exceptions
+from celery import shared_task
 
 from app.config import settings
 from app.database import SessionLocal
@@ -11,18 +15,30 @@ from app.services.apple.healthkit.sleep_service import (
     load_sleep_state,
 )
 from app.utils.sentry_helpers import log_and_capture_error
-from celery import shared_task
 
 logger = getLogger(__name__)
 
 
 @shared_task
 def finalize_stale_sleeps() -> None:
+    """No-op when Redis isn't configured.
+
+    Apple HealthKit "active sleep tracking" stores state in Redis (active_users
+    SET + per-user state).  In Cloud-Tasks-backed deployments without Redis
+    (axlbrains prod), there's no Redis to read, so there are no active users to
+    finalise.  Fail open instead of crashing the hourly Cloud Scheduler call.
+    """
     now = datetime.now(timezone.utc)
     redis_client = get_redis_client()
 
+    try:
+        active_users = list(cast("set[str]", redis_client.smembers(active_users_key())))
+    except (redis.exceptions.RedisError, OSError) as exc:
+        logger.warning("finalize_stale_sleeps: Redis unreachable, skipping (%s)", exc)
+        return
+
     with SessionLocal() as db:
-        for user_id in redis_client.smembers(active_users_key()):
+        for user_id in active_users:
             try:
                 # Skip users whose upload is currently in progress.
                 lock = redis_client.lock(f"sleep:lock:{user_id}", timeout=30, blocking_timeout=0)
