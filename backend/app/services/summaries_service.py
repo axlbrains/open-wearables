@@ -53,9 +53,12 @@ from app.utils.pagination import (
 from app.utils.structured_logging import log_structured
 
 # Series types needed for sleep physiological metrics
-# TODO: Add HRV, respiratory rate, and SpO2 when ready
 SLEEP_PHYSIO_SERIES_TYPES = [
     SeriesType.heart_rate,
+    SeriesType.heart_rate_variability_sdnn,
+    SeriesType.heart_rate_variability_rmssd,
+    SeriesType.respiratory_rate,
+    SeriesType.oxygen_saturation,
 ]
 
 # Activity summary constants
@@ -141,10 +144,9 @@ class SummariesService:
 
             # Sort by priority
             def sort_key(entry: dict) -> tuple[int, int, str]:
-                # Parse provider
-                source = entry.get("source", "unknown")
+                raw_provider = entry.get("provider") or entry.get("source")
                 try:
-                    provider = ProviderName(source)
+                    provider = ProviderName(raw_provider)
                 except ValueError:
                     provider = ProviderName.UNKNOWN
 
@@ -224,6 +226,7 @@ class SummariesService:
                 SeriesType.heart_rate,
                 SeriesType.distance_walking_running,
                 SeriesType.flights_climbed,
+                SeriesType.active_time,
             ]
         ]
 
@@ -311,9 +314,11 @@ class SummariesService:
                     awake_minutes=result.get("awake_minutes"),
                 )
 
-            # Fetch average heart rate during the sleep period
-            # TODO: Add HRV, respiratory rate, and SpO2 when ready
             avg_hr: int | None = None
+            avg_hrv_sdnn: float | None = None
+            avg_hrv_rmssd: float | None = None
+            avg_respiratory_rate: float | None = None
+            avg_spo2_percent: float | None = None
 
             sleep_start = result.get("min_start_time")
             sleep_end = result.get("max_end_time")
@@ -328,11 +333,15 @@ class SummariesService:
                     )
                     hr_avg = physio_averages.get(SeriesType.heart_rate)
                     avg_hr = int(round(hr_avg)) if hr_avg is not None else None
+                    avg_hrv_sdnn = physio_averages.get(SeriesType.heart_rate_variability_sdnn)
+                    avg_hrv_rmssd = physio_averages.get(SeriesType.heart_rate_variability_rmssd)
+                    avg_respiratory_rate = physio_averages.get(SeriesType.respiratory_rate)
+                    avg_spo2_percent = physio_averages.get(SeriesType.oxygen_saturation)
                 except Exception as e:
                     log_structured(
                         self.logger,
                         "warning",
-                        f"Failed to fetch heart rate metrics for sleep: {e}",
+                        f"Failed to fetch physiological metrics for sleep: {e}",
                         sleep_start=sleep_start,
                         sleep_end=sleep_end,
                     )
@@ -349,10 +358,10 @@ class SummariesService:
                 nap_count=result.get("nap_count"),
                 nap_duration_minutes=result.get("nap_duration_minutes"),
                 avg_heart_rate_bpm=avg_hr,
-                # TODO: Implement these when ready
-                avg_hrv_sdnn_ms=None,
-                avg_respiratory_rate=None,
-                avg_spo2_percent=None,
+                avg_hrv_sdnn_ms=avg_hrv_sdnn,
+                avg_hrv_rmssd_ms=avg_hrv_rmssd,
+                avg_respiratory_rate=avg_respiratory_rate,
+                avg_spo2_percent=avg_spo2_percent,
             )
             data.append(summary)
 
@@ -627,8 +636,13 @@ class SummariesService:
             if active_cal is not None or basal_cal is not None:
                 total_cal = (active_cal or 0.0) + (basal_cal or 0.0)
 
-            # Get active/sedentary minutes
-            active_mins = activity_data.get("active_minutes")
+            # Active minutes: prefer the provider-reported daily active time (Garmin
+            # activeTimeInSeconds, Oura high+medium+low activity time, Polar active_duration).
+            # Fall back to the step-threshold heuristic only when the provider doesn't report it.
+            # Sedentary stays on the step-threshold path (no cross-provider source yet).
+            active_mins = result.get("active_time_minutes")
+            if active_mins is None:
+                active_mins = activity_data.get("active_minutes")
             sedentary_mins = activity_data.get("sedentary_minutes")
 
             # Get intensity minutes from HR data

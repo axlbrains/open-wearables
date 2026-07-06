@@ -60,6 +60,8 @@ logger = logging.getLogger(__name__)
 class PolarWebhookHandler(BaseWebhookHandler):
     """Webhook handler for Polar AccessLink notify-only events."""
 
+    user_id_field = "user_id"
+
     def __init__(self, workouts: "PolarWorkouts | None" = None, data_247: "Polar247Data | None" = None) -> None:
         super().__init__("polar")
         self.connection_repo = UserConnectionRepository()
@@ -210,6 +212,8 @@ class PolarWebhookHandler(BaseWebhookHandler):
         path = urlparse(event.url).path
         user_id = connection.user_id
 
+        self.connection_repo.update_last_synced_at(db, connection)
+
         log_structured(
             logger,
             "info",
@@ -246,4 +250,4 @@ class PolarWebhookHandler(BaseWebhookHandler):
                     "user_id": str(user_id),
                 },
             )
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": str(exc), "user_id": str(user_id)}

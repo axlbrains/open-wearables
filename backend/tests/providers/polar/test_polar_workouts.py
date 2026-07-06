@@ -12,6 +12,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy.orm import Session
 
+from app.constants.workout_types.polar import get_unified_workout_type
 from app.schemas.enums import WorkoutType
 from app.schemas.providers.polar import ExerciseJSON as PolarExerciseJSON
 from app.services.providers.polar.workouts import PolarWorkouts
@@ -669,3 +670,16 @@ class TestPolarWorkoutsParseExercises:
 
         assert len(parsed) == 1
         assert parsed[0].device is None
+
+
+class TestGetUnifiedWorkoutType:
+    @pytest.mark.parametrize(
+        ("sport", "detailed", "expected"),
+        [
+            ("CYCLING", "INDOOR_CYCLING", WorkoutType.INDOOR_CYCLING),
+            ("OTHER", "JUMP_ROPE", WorkoutType.CARDIO_TRAINING),
+            ("OTHER", "KICKBOXING_MARTIAL_ARTS", WorkoutType.BOXING),
+        ],
+    )
+    def test_mappings(self, sport: str, detailed: str, expected: WorkoutType) -> None:
+        assert get_unified_workout_type(sport, detailed) == expected

@@ -29,12 +29,11 @@ class RoutePointJSON(BaseModel):
 
 class TrainingLoadProJSON(BaseModel):
     date: str | None = None
-    # axl-api#141: Polar sends these training-load scores as floats (e.g.
-    # cardio-load=68.1259). A required-int here made the whole ExerciseJSON fail
-    # validation, so the offending exercise was skipped and its data lost.
-    cardio_load: int | float | None = Field(None, alias="cardio-load")
-    muscle_load: int | float | None = Field(None, alias="muscle-load")
-    perceived_load: int | float | None = Field(None, alias="perceived-load")
+    # axl-api#141 / upstream #1204: Polar sends these training-load scores as
+    # floats (e.g. cardio-load=68.1259); a required int dropped the whole exercise.
+    cardio_load: float | None = Field(None, alias="cardio-load")
+    muscle_load: float | None = Field(None, alias="muscle-load")
+    perceived_load: float | None = Field(None, alias="perceived-load")
     cardio_load_interpretation: str | None = Field(None, alias="cardio-load-interpretation")
     muscle_load_interpretation: str | None = Field(None, alias="muscle-load-interpretation")
     perceived_load_interpretation: str | None = Field(None, alias="perceived-load-interpretation")

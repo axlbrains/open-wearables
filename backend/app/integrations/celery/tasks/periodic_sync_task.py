@@ -47,6 +47,4 @@ def sync_all_users(
             kwargs={"user_id": str(active_user_id), "start_date": start_date, "end_date": end_date},
         )
 
-
     return SyncAllUsersResult(users_for_sync=len(active_user_ids)).model_dump()
-
