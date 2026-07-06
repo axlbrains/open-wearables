@@ -4,6 +4,10 @@ Please follow the guidelines and project structure defined in ./AGENTS.md
 
 For Cursor and other agents: Refer to .cursor/rules/ for detailed configuration.
 
+## Writing in Slava's voice
+
+When drafting anything Slava-authored for a human audience — GitHub issues/PR comments/reviews upstream, emails, Slack — follow **`./TONE.md`** (his real writing profile: short, laconic, greeting with `!`, CTA at the end, minimal signature, 1–2 natural rough edges, no em-dashes/bullets/`!!!`). Keep public technical issues clean but tight. Internal docs (CLAUDE.md, memory, AGENTS.md) stay in normal technical prose — TONE.md is only for messages that go out as Slava.
+
 ## Repo & fork layout
 
 - This checkout is the **`axlbrains/open-wearables`** fork (remote `origin`); upstream is **`the-momentum/open-wearables`** (remote `upstream`). Our issues/PRs live in the **axlbrains** fork — when asked to look at "our" issues/PRs, use `--repo axlbrains/open-wearables`, not upstream.
