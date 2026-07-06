@@ -4,4 +4,4 @@ set -e -x
 PORT="${PORT:-8000}"
 
 echo "Starting the FastAPI application for Cloud Run..."
-/root_project/.venv/bin/fastapi run app/main.py --host 0.0.0.0 --port "${PORT}"
+/opt/venv/bin/fastapi run app/main.py --host 0.0.0.0 --port "${PORT}"
