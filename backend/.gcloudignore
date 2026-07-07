@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Never upload local env files to Cloud Build — they get COPY'd into the image
+# and a value not overridden by the Cloud Run env silently wins in prod. A baked
+# REDIS_HOST=redis 500'd every OAuth /authorize once (axlbrains#33). Keep .env.example.
+.env
+**/.env

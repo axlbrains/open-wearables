@@ -3,6 +3,14 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Never bake local env files into the image. pydantic-settings reads
+# config/.env at runtime, and a value NOT overridden by the Cloud Run env
+# (e.g. REDIS_HOST) would silently win in prod — this shipped a prod outage
+# where a baked REDIS_HOST=redis 500'd every OAuth /authorize (axlbrains#33).
+# Keep .env.example (it carries no real values).
+.env
+**/.env
+
 .coverage
 .pytest_cache/
 .ruff_cache/
