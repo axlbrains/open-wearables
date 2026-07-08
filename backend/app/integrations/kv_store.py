@@ -318,6 +318,35 @@ class KvStoreClient:
             )
         return res.rowcount
 
+    def eval(self, script: str, numkeys: int, *keys_and_args: Any) -> Any:
+        """Minimal Lua ``EVAL`` shim for the one script the codebase uses.
+
+        ``app/services/sync_coordination.py`` releases its primary lock via a
+        compare-and-delete Lua script (``del KEYS[1]`` iff ``get KEYS[1] ==
+        ARGV[1]``) so it never deletes a lock another caller re-acquired. On
+        real Redis that's an atomic ``EVAL``; here we express the same intent
+        as a single atomic Postgres ``DELETE ... WHERE key = k AND value = v``.
+
+        Only the compare-and-delete shape is recognised — any other script
+        raises so a newly-introduced Lua script fails loudly here instead of
+        silently misbehaving on the KvStore backend.
+        """
+        keys = keys_and_args[:numkeys]
+        args = keys_and_args[numkeys:]
+        norm = " ".join(script.split())
+        is_cas_delete = 'redis.call("del"' in norm and 'redis.call("get"' in norm and "ARGV[1]" in norm
+        if is_cas_delete and len(keys) >= 1 and len(args) >= 1:
+            with self._engine.begin() as conn:
+                res = conn.execute(
+                    text(
+                        "DELETE FROM kv_entry WHERE key = :k AND value = :v "
+                        "AND (expires_at IS NULL OR expires_at > now())"
+                    ),
+                    {"k": keys[0], "v": args[0]},
+                )
+            return res.rowcount
+        raise NotImplementedError(f"kv_store.eval: unsupported Lua script (first 80 chars): {norm[:80]!r}")
+
     # ------------------------------------------------------------------
     # Sets
     # ------------------------------------------------------------------
