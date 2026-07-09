@@ -8,6 +8,7 @@ from celery import shared_task
 
 from app.config import settings
 from app.database import SessionLocal
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.schemas.auth import LiveSyncMode
@@ -419,7 +420,14 @@ def sync_vendor_data(
                                 user_id=user_id,
                                 linked_user_id=str(linked_conn.user_id),
                             )
-                            sync_vendor_data.apply_async(
+                            # Route through the dispatcher (prod uses cloud_tasks, not a
+                            # Celery/Redis broker). Raw .apply_async() hits celery's Redis
+                            # backend and fails in prod — see the task_dispatcher convention.
+                            # No dedup_key: fan-out must fire on every run (a stable key
+                            # would suppress later hourly fan-outs within the ~1h dedup
+                            # window). Matches the original apply_async (no dedup).
+                            dispatch_task(
+                                RegisteredTask.SYNC_VENDOR_DATA,
                                 kwargs={
                                     "user_id": str(linked_conn.user_id),
                                     "start_date": start_date,
@@ -428,7 +436,7 @@ def sync_vendor_data(
                                     "is_historical": is_historical,
                                     "_skip_linked_fan_out": True,
                                     "_linked_primary_user_id": user_id,
-                                }
+                                },
                             )
 
                     result.providers_synced[provider_name] = provider_result
