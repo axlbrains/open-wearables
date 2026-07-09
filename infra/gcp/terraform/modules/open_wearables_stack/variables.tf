@@ -107,7 +107,7 @@ variable "service_accounts" {
 variable "service_account_project_roles" {
   description = "A map of account_key to a list of roles to grant at the project level."
   type        = map(list(string))
-  default     = {
+  default = {
     api = [
       "roles/cloudsql.client",
       "roles/redis.editor",
@@ -180,7 +180,7 @@ variable "create_secrets" {
 variable "secret_names" {
   description = "Secret Manager secret IDs to create without versions."
   type        = list(string)
-  default     = [
+  default = [
     "polar_client_id",
     "polar_client_secret"
   ]
@@ -346,7 +346,7 @@ variable "backend_api_concurrency" {
 variable "backend_api_min_instances" {
   description = "The minimum instance count for the backend API service."
   type        = number
-  default     = 0
+  default     = 1 # keep one warm instance: cold starts + cpu_idle drop logs (see cloud_run.tf). Cost accepted (OW#32).
 }
 
 variable "backend_api_max_instances" {
@@ -427,7 +427,7 @@ variable "backend_worker_concurrency" {
 variable "backend_worker_min_instances" {
   description = "The minimum instance count for the worker service."
   type        = number
-  default     = 0
+  default     = 1 # keep one warm instance (OW#32: min=1 everywhere, cost accepted).
 }
 
 variable "backend_worker_max_instances" {
@@ -571,7 +571,7 @@ variable "frontend_concurrency" {
 variable "frontend_min_instances" {
   description = "The minimum instance count for the frontend service."
   type        = number
-  default     = 0
+  default     = 1 # keep one warm instance (OW#32: min=1 everywhere, cost accepted).
 }
 
 variable "frontend_max_instances" {
