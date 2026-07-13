@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -24,12 +25,16 @@ from app.services.outgoing_webhooks.events import (
     SVIX_MAX_SAMPLES_PER_EVENT,
     _dispatch,
     on_connection_created,
+    on_connection_revoked,
     on_sleep_created,
     on_timeseries_batch_saved,
     on_workout_created,
 )
 from app.utils.security import create_access_token
 from tests.factories import DeveloperFactory
+
+# Svix eventId charset: colons/plus signs from ISO 8601 timestamps must not survive.
+_SVIX_ID_SAFE_RE = re.compile(r"^[a-zA-Z0-9\-_.]+$")
 
 # ---------------------------------------------------------------------------
 # Helpers — outgoing webhook helpers route through dispatch_task now, so
@@ -253,6 +258,31 @@ class TestWebhookEmit:
         payload = _payload_of(call)
         assert payload["data"]["provider"] == "garmin"
         assert payload["data"]["connection_id"] == str(cid)
+        # connected_at's colons/offset must not leak into the Svix event_id
+        assert _SVIX_ID_SAFE_RE.match(call.kwargs["kwargs"]["idempotency_key"])
+
+    @patch("app.integrations.task_dispatcher.dispatch_task")
+    def test_on_connection_revoked_dispatches(self, mock_dispatch: MagicMock) -> None:
+        uid = uuid4()
+        cid = uuid4()
+        on_connection_revoked(
+            user_id=uid,
+            provider="garmin",
+            connection_id=cid,
+            reason="refresh_failed",
+            revoked_at="2026-01-01T12:00:00.123456+00:00",
+        )
+        mock_dispatch.assert_called_once()
+        call = mock_dispatch.call_args
+        assert _event_type_of(call) == "connection.revoked"
+        payload = _payload_of(call)
+        assert payload["data"]["provider"] == "garmin"
+        assert payload["data"]["reason"] == "refresh_failed"
+        # revoked_at is an isoformat() timestamp - colons/offset must be sanitized
+        idempotency_key = call.kwargs["kwargs"]["idempotency_key"]
+        assert _SVIX_ID_SAFE_RE.match(idempotency_key)
+        assert ":" not in idempotency_key
+        assert "+" not in idempotency_key
 
     def test_dispatch_swallows_broker_error(self) -> None:
         """_dispatch silently drops the event when the dispatcher backend fails."""
