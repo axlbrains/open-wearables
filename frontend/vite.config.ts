@@ -31,6 +31,9 @@ const config = defineConfig({
       // decimal.js-light has "main": "decimal" (no extension) in package.json
       // which breaks ESM resolution when externalized. Force inline bundling.
       noExternals: ['decimal.js-light'],
+      // server/middleware + server/plugins: 405-guard for non-GET/HEAD and
+      // stderr logging of unhandled server errors (issue #37).
+      serverDir: 'server',
     }),
     tailwindcss(),
     tanstackStart(),
