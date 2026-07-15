@@ -355,6 +355,15 @@ variable "frontend_min_instances" {
   default     = 0
 }
 
+variable "backend_worker_resource_limits" {
+  description = "Resource limits for the worker service. Strava per-sample stream ingestion (INGEST_WORKOUT_SAMPLES) OOMed the worker at 1Gi on 2026-07-14 — prod runs 2Gi via TFVARS_PROD."
+  type        = map(string)
+  default = {
+    cpu    = "1000m"
+    memory = "1024Mi"
+  }
+}
+
 variable "backend_vpc_egress" {
   description = "VPC egress mode for backend services. Use PRIVATE_RANGES_ONLY when only Cloud SQL / Memorystore needs the connector; ALL_TRAFFIC routes everything through the connector."
   type        = string

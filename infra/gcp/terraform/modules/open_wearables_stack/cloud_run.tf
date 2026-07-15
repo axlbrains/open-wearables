@@ -85,10 +85,10 @@ locals {
 resource "google_cloud_run_v2_service" "backend_api" {
   count = var.enable_backend_api_service ? 1 : 0
 
-  project  = var.project_id
-  name     = local.backend_api_service_name_resolved
-  location = var.region
-  ingress  = var.backend_api_ingress
+  project             = var.project_id
+  name                = local.backend_api_service_name_resolved
+  location            = var.region
+  ingress             = var.backend_api_ingress
   deletion_protection = false
 
   labels = merge(var.labels, { component = "backend-api" })
@@ -194,10 +194,10 @@ resource "google_cloud_run_v2_service" "backend_api" {
 resource "google_cloud_run_v2_service" "backend_worker" {
   count = var.enable_worker_service ? 1 : 0
 
-  project  = var.project_id
-  name     = local.backend_worker_service_name_resolved
-  location = var.region
-  ingress  = var.backend_worker_ingress
+  project             = var.project_id
+  name                = local.backend_worker_service_name_resolved
+  location            = var.region
+  ingress             = var.backend_worker_ingress
   deletion_protection = false
 
   labels = merge(var.labels, { component = "backend-worker" })
@@ -298,11 +298,11 @@ resource "google_cloud_run_v2_service" "backend_worker" {
 resource "google_cloud_run_v2_job" "backend_init" {
   count = var.enable_backend_init_job ? 1 : 0
 
-  project  = var.project_id
-  name     = local.backend_init_job_name_resolved
-  location = var.region
+  project             = var.project_id
+  name                = local.backend_init_job_name_resolved
+  location            = var.region
   deletion_protection = false
-  labels   = merge(var.labels, { component = "backend-init" })
+  labels              = merge(var.labels, { component = "backend-init" })
 
   template {
     template {
@@ -386,10 +386,10 @@ resource "google_cloud_run_v2_job" "backend_init" {
 resource "google_cloud_run_v2_service" "frontend" {
   count = var.enable_frontend_service ? 1 : 0
 
-  project  = var.project_id
-  name     = local.frontend_service_name_resolved
-  location = var.region
-  ingress  = var.frontend_ingress
+  project             = var.project_id
+  name                = local.frontend_service_name_resolved
+  location            = var.region
+  ingress             = var.frontend_ingress
   deletion_protection = false
 
   labels = merge(var.labels, { component = "frontend" })
@@ -442,6 +442,12 @@ resource "google_cloud_run_v2_service" "frontend" {
   }
 
   lifecycle {
+    # Frontend images are also deployed manually with semver tags. Without this,
+    # every infra `terraform apply` reverts the running frontend image to the
+    # var.frontend_image pin (from the TFVARS_PROD secret, which lags the manual
+    # line) — same landmine that hit api/worker. See CLAUDE.md "Prod infra".
+    ignore_changes = [template[0].containers[0].image]
+
     precondition {
       condition     = var.frontend_image != null
       error_message = "frontend_image must be set when enable_frontend_service is true."
