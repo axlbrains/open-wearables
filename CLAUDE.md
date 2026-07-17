@@ -64,3 +64,14 @@ When drafting anything Slava-authored for a human audience — GitHub issues/PR 
 - **Also a cause (but NOT what hit OW api/worker — that was the exclusion above): `cpu_idle = true` (CPU throttling) on a low-traffic Cloud Run service can drop container stdout/stderr** — instance throttled to ~0 CPU before the log pipeline flushes. Set `cpu_idle = false` (`--no-cpu-throttling`, in `infra/gcp/terraform/modules/open_wearables_stack/cloud_run.tf`). NB api already had `cpu-throttling=false` while still dark, and the frontend had `cpu-throttling=true` and logged fine — so if logs are missing WITH throttling off, suspect an exclusion, not CPU.
 - **Red herrings that are NOT the cause:** stdout buffering (`PYTHONUNBUFFERED` — already set); runtime SA missing `roles/logging.logWriter` (Cloud Run ships container logs via the service agent, verified `axl-av-prod` logs with no logging role); the VPC connector + `vpc-egress=private-ranges-only` (a throwaway `hello` service with the same connector logged fine); the cloudsql sidecar. Good probes: compare against a service that logs (`open-wearables-prod-frontend`, `axl-av-prod`); Cloud Run **Jobs** always have CPU so they log.
 - App logging: `app/utils/structured_logging.py` `log_structured()` does `print(json, file=sys.stdout, flush=True)`. `app/main.py` reconfigures root logging to stdout and adds a global `Exception` handler that logs the traceback before returning 500 (so prod 5xx are root-causable once logs flow). In prod a `UvicornAccess2xxFilter` drops happy-path 2xx access lines.
+
+
+## Product & testing specs → axl-docs
+
+Product features and how to test them are specified in the sibling repo `../axl-docs` ([axlbrains/axl-docs](https://github.com/axlbrains/axl-docs), private):
+
+- `product/critical-paths.md` — the P0 end-to-end paths the product must support; notes and negative scenarios per path. `CP-x.x` IDs are referenced in tickets.
+- `product/open-questions.md` — open questions blocking critical paths.
+- `product/golden-question-set.md` — the frozen golden questions asked of a coach's twin.
+
+When building or verifying a feature, find its `CP-x.x` path there first.
