@@ -189,6 +189,21 @@ class KvStoreClient:
             ).first()
         return row[0] if row else None
 
+    def exists(self, *keys: str) -> int:
+        """Mirror ``redis.exists``: count of the given keys that exist (expired keys excluded)."""
+        if not keys:
+            return 0
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(
+                    "SELECT count(*) FROM kv_entry "
+                    "WHERE key = ANY(CAST(:keys AS text[])) "
+                    "AND (expires_at IS NULL OR expires_at > now())"
+                ),
+                {"keys": list(keys)},
+            ).first()
+        return int(row[0]) if row else 0
+
     def mget(self, keys: Iterable[str]) -> list[str | None]:
         keys_list = list(keys)
         if not keys_list:

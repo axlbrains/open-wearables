@@ -61,12 +61,12 @@ def _trigger_refresh(client: redis.Redis) -> None:
     if not client.set(_LOCK_KEY, token, nx=True, ex=_LOCK_TTL_SECONDS):
         return
     # Imported lazily to avoid a circular import (task -> this module -> task).
-    from app.integrations.celery.tasks.refresh_dashboard_stats_task import refresh_dashboard_total_data_points
+    from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 
-    # retry=False: never let broker connection retries block the dashboard request. The task
-    # releases the lock (matching this token) when it finishes.
+    # The task releases the lock (matching this token) when it finishes; on dispatch
+    # failure we free the lock ourselves so a later request can retry.
     try:
-        refresh_dashboard_total_data_points.apply_async(args=[token], retry=False)
+        dispatch_task(RegisteredTask.REFRESH_DASHBOARD_STATS, args=[token])
     except Exception:
         # Dispatch failed (e.g. broker down): free our lock so a later request can retry.
         logger.warning("Failed to dispatch dashboard stats refresh", exc_info=True)
