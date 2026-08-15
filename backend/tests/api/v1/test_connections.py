@@ -577,8 +577,13 @@ class TestDeleteProviderDataEndpoint:
         db.expire_all()
         assert db.query(DataSource).filter_by(user_id=user.id, provider="apple").count() == 0
 
-    def test_delete_data_nonexistent_connection_returns_404(self, client: TestClient, db: Session) -> None:
-        """Purging a provider the user was never connected to returns 404."""
+    def test_delete_data_nonexistent_connection_is_idempotent(self, client: TestClient, db: Session) -> None:
+        """Purging a provider the user was never connected to succeeds silently.
+
+        Fork divergence from upstream (which 404s): DELETE endpoints are idempotent
+        here — the client's local state may be stale, and a successful purge lets the
+        user re-authorize cleanly (see user_connection_service.disconnect docstring).
+        """
         # Arrange
         user = UserFactory()
         api_key = ApiKeyFactory()
@@ -588,7 +593,7 @@ class TestDeleteProviderDataEndpoint:
         response = client.delete(f"/api/v1/users/{user.id}/connections/garmin/data", headers=headers)
 
         # Assert
-        assert response.status_code == 404
+        assert response.status_code == 204
 
     def test_delete_data_missing_api_key(self, client: TestClient, db: Session) -> None:
         """Request without API key is rejected."""
