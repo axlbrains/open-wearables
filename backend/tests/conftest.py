@@ -198,6 +198,15 @@ def _configure_redis(_redis_url: str) -> Generator[None, None, None]:
         # resolve docker-compose's "db" host and DNS-fails inside CI.
         patch.object(settings, "redis_url_override", SecretStr(_redis_url)),
     ):
+        # The celery app is created at import time (app.main) with a broker URL
+        # built from the un-patched settings (localhost:6379, or docker-compose's
+        # "redis" host if config/.env is present). Point it at the test Redis so
+        # tests that dispatch through celery work locally, not only in CI where a
+        # real Redis happens to listen on localhost:6379.
+        from app.main import celery_app
+
+        celery_app.conf.broker_url = _redis_url
+        celery_app.conf.result_backend = _redis_url
         yield
 
 

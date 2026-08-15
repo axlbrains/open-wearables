@@ -1,4 +1,5 @@
 import logging
+import socket
 import ssl
 import sys
 from logging import Formatter, LogRecord, StreamHandler, getLogger
@@ -12,6 +13,24 @@ from app.config import settings
 from app.services import raw_payload_storage
 
 _WEBHOOK_TASK = "emit_webhook_event_task.emit_webhook_event"
+
+
+def _tcp_keepalive_options() -> dict[int, int]:
+    """TCP keepalive setsockopt values keyed by this platform's socket constants.
+
+    macOS has no TCP_KEEPIDLE; its equivalent is TCP_KEEPALIVE. Options whose
+    constant doesn't exist on the platform are omitted.
+    """
+    opts: dict[int, int] = {}
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        opts[socket.TCP_KEEPIDLE] = 60
+    elif hasattr(socket, "TCP_KEEPALIVE"):
+        opts[socket.TCP_KEEPALIVE] = 60
+    if hasattr(socket, "TCP_KEEPINTVL"):
+        opts[socket.TCP_KEEPINTVL] = 10
+    if hasattr(socket, "TCP_KEEPCNT"):
+        opts[socket.TCP_KEEPCNT] = 3
+    return opts
 
 
 class _WebhookTraceFilter(logging.Filter):
@@ -88,9 +107,10 @@ def create_celery() -> Celery:
         # dead socket so the connection is recycled instead of blocking indefinitely.
         broker_transport_options={
             "socket_keepalive": True,
-            # Linux TCP socket-option ints: 4=TCP_KEEPIDLE (60s idle before probing),
-            # 5=TCP_KEEPINTVL (10s between probes), 6=TCP_KEEPCNT (3 failed probes -> drop).
-            "socket_keepalive_options": {4: 60, 5: 10, 6: 3},
+            # 60s idle before probing, 10s between probes, 3 failed probes -> drop.
+            # Resolved via socket constants, not raw Linux ints: the numeric values
+            # differ per OS (setsockopt fails with "Protocol not available" on macOS).
+            "socket_keepalive_options": _tcp_keepalive_options(),
             # redis-py periodic health check: PING idle pooled connections so a dead one is
             # replaced rather than handed to the next publish/consume.
             "health_check_interval": 30,

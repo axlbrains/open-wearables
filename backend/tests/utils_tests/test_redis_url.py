@@ -12,6 +12,7 @@ class TestRedisUrl:
 
     def test_plaintext_url_without_auth(self) -> None:
         with (
+            patch.object(settings, "redis_url_override", None),
             patch.object(settings, "redis_host", "localhost"),
             patch.object(settings, "redis_port", 6379),
             patch.object(settings, "redis_db", 0),
@@ -23,6 +24,7 @@ class TestRedisUrl:
 
     def test_tls_uses_rediss_scheme_and_cert_reqs(self) -> None:
         with (
+            patch.object(settings, "redis_url_override", None),
             patch.object(settings, "redis_host", "redis.example.com"),
             patch.object(settings, "redis_port", 6379),
             patch.object(settings, "redis_db", 0),
@@ -36,6 +38,7 @@ class TestRedisUrl:
         # Managed AUTH tokens can contain reserved chars; '#' would truncate the
         # URL and '+'/'=' change how it parses, so they must be percent-encoded.
         with (
+            patch.object(settings, "redis_url_override", None),
             patch.object(settings, "redis_host", "redis.example.com"),
             patch.object(settings, "redis_port", 6379),
             patch.object(settings, "redis_db", 1),
