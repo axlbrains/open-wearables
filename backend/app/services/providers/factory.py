@@ -4,6 +4,7 @@ from app.services.providers.base_strategy import BaseProviderStrategy
 from app.services.providers.fitbit.strategy import FitbitStrategy
 from app.services.providers.garmin.strategy import GarminStrategy
 from app.services.providers.google.strategy import GoogleStrategy
+from app.services.providers.hevy.strategy import HevyStrategy
 from app.services.providers.oura.strategy import OuraStrategy
 from app.services.providers.polar.strategy import PolarStrategy
 from app.services.providers.samsung.strategy import SamsungStrategy
@@ -29,6 +30,8 @@ class ProviderFactory:
                 return GarminStrategy()
             case ProviderName.SENSORBIO.value:
                 return SensorBioStrategy()
+            case ProviderName.HEVY.value:
+                return HevyStrategy()
             case ProviderName.SUUNTO.value:
                 return SuuntoStrategy()
             case ProviderName.POLAR.value:

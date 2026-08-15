@@ -92,6 +92,11 @@ class ProviderCapabilities:
         env vars) and is stored in ``provider_settings.webhook_secret``.
         Must be used together with ``webhook_registration_api=True``.
         Currently: Polar.
+    api_key_connect:
+        Provider has no OAuth; the user supplies a personal API key which is
+        stored on the connection and sent with every REST request. Connections
+        are created via ``POST /users/{user_id}/connections/{provider}``.
+        Requires ``rest_pull=True``. Currently: Hevy.
     max_historical_days:
         Hard upper limit on how far back the provider allows data to be
         fetched. ``None`` means no known limit. Garmin: 30 days.
@@ -105,15 +110,22 @@ class ProviderCapabilities:
     webhook_ping: bool = False
     webhook_registration_api: bool = False
     webhook_inbound_secret: bool = False
+    api_key_connect: bool = False
     max_historical_days: int | None = None
 
     def __post_init__(self) -> None:
+        if self.api_key_connect and not self.rest_pull:
+            raise ValueError("api_key_connect requires rest_pull=True (the key is only used for REST polling)")
         if self.webhook_stream and self.webhook_ping:
             raise ValueError("webhook_stream and webhook_ping are mutually exclusive")
         if self.webhook_ping and not self.rest_pull:
             raise ValueError("webhook_ping requires rest_pull=True (data must be fetched via REST after the ping)")
         if self.webhook_inbound_secret and not self.webhook_registration_api:
             raise ValueError("webhook_inbound_secret requires webhook_registration_api=True")
+
+
+class InvalidApiKeyError(Exception):
+    """An api_key_connect provider rejected the supplied API key."""
 
 
 class BaseProviderStrategy(ABC):
