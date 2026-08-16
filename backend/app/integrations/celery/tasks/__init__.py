@@ -48,6 +48,7 @@ from .register_provider_webhooks_task import register_provider_webhooks
 from .renew_oura_webhooks_task import renew_oura_webhooks
 from .seed_data_task import generate_seed_data
 from .send_email_task import send_invitation_email_task
+from .strava_stream_retry_task import retry_strava_stream_ingest
 from .sync_vendor_data_task import sync_vendor_data
 from .webhook_push_task import process_webhook_push
 
@@ -81,6 +82,7 @@ __all__ = [
     "sync_vendor_data",
     "sync_all_users",
     "refresh_dashboard_total_data_points",
+    "retry_strava_stream_ingest",
     "generate_seed_data",
     "send_invitation_email_task",
     "process_webhook_push",

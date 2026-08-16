@@ -446,6 +446,23 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         detail_for_record = detail.model_copy(update={"record_id": created_record.id})
         event_record_service.create_detail(db, detail_for_record)
         created_ids.append(created_record.id)
-        self._ingest_workout_streams(db, activity, user_id, record)
+        ingested = self._ingest_workout_streams(db, activity, user_id, record)
+
+        # Strava's webhook typically fires seconds after upload, before their
+        # stream processing finishes — the immediate fetch above then returns
+        # empty and, because the webhook bumps last_synced_at past the
+        # activity's start, the periodic pull never re-covers the workout.
+        # Schedule a delayed retry so the samples land once Strava is done.
+        if (
+            ingested == 0
+            and settings.ingest_workout_samples
+            and record.end_datetime is not None
+            and not timeseries_service.has_samples_in_range(
+                db, user_id, "strava", record.start_datetime, record.end_datetime
+            )
+        ):
+            from app.integrations.celery.tasks.strava_stream_retry_task import schedule_stream_retry
+
+            schedule_stream_retry(str(user_id), str(activity.id), attempt=1)
 
         return created_ids

@@ -39,6 +39,7 @@ class RegisteredTask(str, Enum):
     PROCESS_XML_UPLOAD = "process_xml_upload"
     PROCESS_XML_UPLOAD_REFERENCE = "process_xml_upload_reference"
     REFRESH_DASHBOARD_STATS = "refresh_dashboard_stats"
+    RETRY_STRAVA_STREAM_INGEST = "retry_strava_stream_ingest"
     SEND_INVITATION_EMAIL = "send_invitation_email"
     START_GARMIN_FULL_BACKFILL = "start_garmin_full_backfill"
     SYNC_ALL_USERS = "sync_all_users"
@@ -115,6 +116,10 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
     RegisteredTask.REFRESH_DASHBOARD_STATS: TaskDefinition(
         task_name="app.integrations.celery.tasks.refresh_dashboard_stats_task.refresh_dashboard_total_data_points",
         callable_path="app.integrations.celery.tasks.refresh_dashboard_stats_task.refresh_dashboard_total_data_points",
+    ),
+    RegisteredTask.RETRY_STRAVA_STREAM_INGEST: TaskDefinition(
+        task_name="app.integrations.celery.tasks.strava_stream_retry_task.retry_strava_stream_ingest",
+        callable_path="app.integrations.celery.tasks.strava_stream_retry_task.retry_strava_stream_ingest",
     ),
     RegisteredTask.SEND_INVITATION_EMAIL: TaskDefinition(
         task_name="app.integrations.celery.tasks.send_email_task.send_invitation_email_task",
