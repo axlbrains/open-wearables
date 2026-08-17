@@ -18,7 +18,6 @@ from celery import shared_task
 
 from app.database import DbSession, SessionLocal
 from app.schemas.providers.strava import ActivityJSON as StravaActivityJSON
-from app.services.providers.factory import ProviderFactory
 from app.services.timeseries_service import timeseries_service
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
@@ -37,10 +36,18 @@ def retry_strava_stream_ingest(user_id: str, activity_id: str, attempt: int = 1)
         with SessionLocal() as db:
             _retry_ingest(db, UUID(user_id), str(activity_id), attempt)
     except Exception as e:
+        # A transient failure (detail fetch, token refresh, DB hiccup) must not
+        # end the retry sequence — keep rescheduling until MAX_ATTEMPTS.
         log_and_capture_error(e, logger, "Strava stream retry failed", extra={"activity_id": activity_id})
+        if attempt < MAX_ATTEMPTS:
+            schedule_stream_retry(user_id, str(activity_id), attempt + 1)
 
 
 def _retry_ingest(db: DbSession, user_uuid: UUID, activity_id: str, attempt: int) -> None:
+    # Imported lazily: factory -> strategies -> strava modules; a module-level
+    # import here would participate in that cycle via the tasks package init.
+    from app.services.providers.factory import ProviderFactory
+
     workouts = ProviderFactory().get_provider("strava").workouts
     record = workouts.workout_repo.get_by_external_id(db, user_uuid, activity_id, source="strava")
     if record is None:

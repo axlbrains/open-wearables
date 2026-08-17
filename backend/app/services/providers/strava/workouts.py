@@ -460,6 +460,10 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                 db, user_id, "strava", record.start_datetime, record.end_datetime
             )
         ):
+            # Imported lazily: importing any module under the celery tasks package
+            # triggers tasks/__init__, which imports tasks that import the provider
+            # factory — and the factory imports this module (same pattern as
+            # outgoing_webhooks/events._dispatch).
             from app.integrations.celery.tasks.strava_stream_retry_task import schedule_stream_retry
 
             schedule_stream_retry(str(user_id), str(activity.id), attempt=1)

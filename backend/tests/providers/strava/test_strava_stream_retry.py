@@ -14,6 +14,7 @@ import pytest
 from app.integrations.celery.tasks.strava_stream_retry_task import (
     MAX_ATTEMPTS,
     _retry_ingest,
+    retry_strava_stream_ingest,
     schedule_stream_retry,
 )
 from app.schemas.providers.strava import ActivityJSON as StravaActivityJSON
@@ -93,7 +94,7 @@ class TestRetryTask:
         mock_workouts._ingest_workout_streams.return_value = ingested
         mock_strategy = MagicMock(workouts=mock_workouts)
         with (
-            patch("app.integrations.celery.tasks.strava_stream_retry_task.ProviderFactory") as mock_factory,
+            patch("app.services.providers.factory.ProviderFactory") as mock_factory,
             patch(
                 "app.integrations.celery.tasks.strava_stream_retry_task.timeseries_service.has_samples_in_range",
                 return_value=has_samples,
@@ -132,6 +133,33 @@ class TestRetryTask:
     def test_gives_up_when_record_deleted(self) -> None:
         mock_workouts, mock_schedule = self._run(None, has_samples=False, ingested=0, attempt=1)
         mock_workouts.get_workout_detail_from_api.assert_not_called()
+        mock_schedule.assert_not_called()
+
+
+class TestTransientFailureReschedule:
+    def test_task_reschedules_on_transient_error(self) -> None:
+        with (
+            patch(
+                "app.integrations.celery.tasks.strava_stream_retry_task._retry_ingest",
+                side_effect=RuntimeError("strava 500"),
+            ),
+            patch("app.integrations.celery.tasks.strava_stream_retry_task.SessionLocal"),
+            patch("app.integrations.celery.tasks.strava_stream_retry_task.schedule_stream_retry") as mock_schedule,
+        ):
+            retry_strava_stream_ingest(str(uuid4()), "a-1", attempt=1)
+        mock_schedule.assert_called_once()
+        assert mock_schedule.call_args.args[2] == 2
+
+    def test_task_gives_up_on_transient_error_at_max_attempts(self) -> None:
+        with (
+            patch(
+                "app.integrations.celery.tasks.strava_stream_retry_task._retry_ingest",
+                side_effect=RuntimeError("strava 500"),
+            ),
+            patch("app.integrations.celery.tasks.strava_stream_retry_task.SessionLocal"),
+            patch("app.integrations.celery.tasks.strava_stream_retry_task.schedule_stream_retry") as mock_schedule,
+        ):
+            retry_strava_stream_ingest(str(uuid4()), "a-1", attempt=MAX_ATTEMPTS)
         mock_schedule.assert_not_called()
 
 
