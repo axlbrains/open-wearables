@@ -1,5 +1,5 @@
 import contextlib
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import LiteralString, NamedTuple
 from typing import cast as typing_cast
@@ -32,10 +32,12 @@ from app.database import DbSession
 from app.models import DataPointSeries, DataPointSeriesArchive, DataSource, DeviceTypePriority, ProviderPriority
 from app.models.series_type_definition import SeriesTypeDefinition
 from app.repositories.data_source_repository import DataSourceRepository
-from app.repositories.repositories import CrudRepository
+from app.repositories.repositories import CrudRepository, utc_bucket_start
 from app.schemas.enums import (
     ProviderName,
     SeriesType,
+    TimelineBucket,
+    TimelineGroupBy,
     get_series_type_from_id,
     get_series_type_id,
 )
@@ -518,6 +520,36 @@ class DataPointSeriesRepository(
             .all()
         )
         return [(provider, code, count) for provider, code, count in results]
+
+    def get_user_timeline_counts(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        bucket: TimelineBucket,
+        group_by: TimelineGroupBy,
+        start_datetime: datetime | None = None,
+        end_datetime: datetime | None = None,
+    ) -> list[tuple[str, date, int]]:
+        """Data point counts for a user, bucketed by time and grouped by provider or series type.
+
+        Returns (key, bucket_start, count) for non-empty buckets only.
+        """
+        bucket_start = utc_bucket_start(bucket, self.model.recorded_at)
+        key_column = DataSource.provider if group_by is TimelineGroupBy.PROVIDER else SeriesTypeDefinition.code
+
+        query = db_session.query(key_column, bucket_start, func.count(self.model.id).label("count")).join(
+            DataSource, self.model.data_source_id == DataSource.id
+        )
+        if group_by is TimelineGroupBy.SERIES_TYPE:
+            query = query.join(SeriesTypeDefinition, self.model.series_type_definition_id == SeriesTypeDefinition.id)
+        query = query.filter(DataSource.user_id == user_id)
+        if start_datetime is not None:
+            query = query.filter(self.model.recorded_at >= start_datetime)
+        if end_datetime is not None:
+            query = query.filter(self.model.recorded_at < end_datetime)
+
+        results = query.group_by(key_column, bucket_start).order_by(key_column, bucket_start).all()
+        return [(key, bucket_start_value, count) for key, bucket_start_value, count in results]
 
     def get_count_by_source(self, db_session: DbSession) -> list[tuple[str | None, int]]:
         """Get count of data points grouped by source.

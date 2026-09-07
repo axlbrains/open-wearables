@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 
 import app.services.sync_status_service as sync_status_service
-from app.schemas.sync_status import SyncSource, SyncStage, SyncStatus, SyncStatusEvent
+from app.api.routes.v1.sync_status import _ensure_user_exists_detached
+from app.schemas.sync_status import SyncScope, SyncSource, SyncStage, SyncStatus, SyncStatusEvent
 from tests.factories import UserFactory
 
 
@@ -104,3 +110,66 @@ class TestRunsEndpoint:
 # forwarding) is exercised against the underlying generator in
 # tests/services/test_sync_status_service.py — TestClient.stream + a
 # long-lived generator interact poorly with pytest's lifespan fixtures.
+
+
+class TestHistoryEndpointFilters:
+    """The drill-down from a gap in the data to the run that was meant to cover it."""
+
+    def _persist(self, user_id: UUID, run_key: str, provider: str, window: tuple | None) -> None:
+        window_start, window_end = window or (None, None)
+        sync_status_service.try_persist_run(
+            SyncStatusEvent(
+                run_id=run_key,
+                user_id=user_id,
+                provider=provider,
+                source=SyncSource.BACKFILL,
+                scope=SyncScope.HISTORICAL,
+                stage=SyncStage.STARTED,
+                status=SyncStatus.IN_PROGRESS,
+                started_at=datetime.now(timezone.utc),
+                window_start=window_start,
+                window_end=window_end,
+            )
+        )
+
+    @patch("app.services.sync_status_service.SessionLocal")
+    def test_filters_by_provider_and_covered_window(
+        self,
+        mock_session_local: MagicMock,
+        client: TestClient,
+        api_key_header: dict[str, str],
+        db: Session,
+    ) -> None:
+        mock_session_local.return_value.__enter__.return_value = db
+        user = UserFactory()
+        march = (datetime(2026, 3, 1, tzinfo=timezone.utc), datetime(2026, 4, 1, tzinfo=timezone.utc))
+        january = (datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 2, 1, tzinfo=timezone.utc))
+        self._persist(user.id, "garmin_march", "garmin", march)
+        self._persist(user.id, "garmin_january", "garmin", january)
+        self._persist(user.id, "oura_march", "oura", march)
+
+        response = client.get(
+            f"/api/v1/users/{user.id}/sync/history",
+            headers=api_key_header,
+            params={
+                "provider": "garmin",
+                "covered_from": "2026-03-10T00:00:00Z",
+                "covered_to": "2026-03-20T00:00:00Z",
+            },
+        )
+
+        assert response.status_code == 200
+        assert [r["run_key"] for r in response.json()] == ["garmin_march"]
+
+
+class TestStreamUserExistence:
+    """The stream checks the user on a session of its own, so the pool is free while it runs."""
+
+    def test_checks_the_user_without_the_request_session(self, db: Session) -> None:
+        user = UserFactory()
+        with patch("app.api.routes.v1.sync_status.SessionLocal") as mock_session_local:
+            mock_session_local.return_value.__enter__.return_value = db
+            _ensure_user_exists_detached(user.id)
+            with pytest.raises(HTTPException) as exc_info:
+                _ensure_user_exists_detached(uuid4())
+        assert exc_info.value.status_code == 404

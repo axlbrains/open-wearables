@@ -27,6 +27,10 @@ from .series_types import (
     get_series_type_id,
     get_series_type_unit,
 )
+from .timeline import (
+    TimelineBucket,
+    TimelineGroupBy,
+)
 from .workout_types import (
     WORKOUTS_WITH_PACE,
     WorkoutType,
@@ -54,4 +58,6 @@ __all__ = [
     "DEFAULT_PROVIDER_PRIORITY",
     "HealthScoreCategory",
     "SdkConnectionOutcome",
+    "TimelineBucket",
+    "TimelineGroupBy",
 ]

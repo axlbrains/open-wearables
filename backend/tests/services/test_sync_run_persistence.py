@@ -3,7 +3,7 @@ Tests for durable sync run storage.
 
 Covers the emit() hook that writes runs to Postgres: the historical-only default,
 the live opt-in, insert on start then update on terminal, and that a storage failure
-cannot break the sync it is tracking.
+cannot break the sync it is tracking. Also covers reading runs back per user.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -25,7 +25,7 @@ from app.schemas.sync_status import (
     SyncStatus,
     SyncStatusEvent,
 )
-from app.services.sync_status_service import try_persist_run, try_record_data_types
+from app.services.sync_status_service import list_stored_runs, try_persist_run, try_record_data_types
 from tests.factories import UserFactory
 
 
@@ -373,3 +373,84 @@ class TestCloseStaleSyncRuns:
         assert db.query(SyncRun).filter(SyncRun.run_key == "garmin_backfill_alive").one().status == (
             SyncStatus.IN_PROGRESS
         )
+
+
+class TestListStoredRunsFilters:
+    """Filters that let a gap in the data be traced back to the run meant to cover it."""
+
+    MARCH = (datetime(2026, 3, 1, tzinfo=timezone.utc), datetime(2026, 4, 1, tzinfo=timezone.utc))
+
+    @patch("app.services.sync_status_service.SessionLocal")
+    def test_provider_filter(self, mock_session_local: MagicMock, db: Session) -> None:
+        mock_session_local.return_value.__enter__.return_value = db
+        user = UserFactory()
+        try_persist_run(_event(user.id, run_id="pull_oura", provider="oura"))
+        try_persist_run(_event(user.id, run_id="pull_garmin", provider="garmin"))
+
+        runs = list_stored_runs(db, user.id, provider="garmin")
+
+        assert [r.run_key for r in runs] == ["pull_garmin"]
+
+    @patch("app.services.sync_status_service.SessionLocal")
+    def test_covered_range_matches_the_window_not_the_run_time(
+        self, mock_session_local: MagicMock, db: Session
+    ) -> None:
+        """Both runs executed now; only the one whose window covers March is a match."""
+        mock_session_local.return_value.__enter__.return_value = db
+        user = UserFactory()
+        try_persist_run(_event(user.id, run_id="backfill_march", window_start=self.MARCH[0], window_end=self.MARCH[1]))
+        try_persist_run(
+            _event(
+                user.id,
+                run_id="backfill_january",
+                window_start=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                window_end=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            )
+        )
+
+        runs = list_stored_runs(
+            db,
+            user.id,
+            covered_from=datetime(2026, 3, 10, tzinfo=timezone.utc),
+            covered_to=datetime(2026, 3, 20, tzinfo=timezone.utc),
+        )
+
+        assert [r.run_key for r in runs] == ["backfill_march"]
+
+    @patch("app.services.sync_status_service.SessionLocal")
+    def test_run_without_any_recorded_window_is_excluded(self, mock_session_local: MagicMock, db: Session) -> None:
+        """Whether an unknown window overlaps the range is undecidable, so it is not a match."""
+        mock_session_local.return_value.__enter__.return_value = db
+        user = UserFactory()
+        try_persist_run(_event(user.id, run_id="pull_no_window"))
+
+        assert list_stored_runs(db, user.id, covered_from=self.MARCH[0], covered_to=self.MARCH[1]) == []
+        assert [r.run_key for r in list_stored_runs(db, user.id)] == ["pull_no_window"]
+
+    @patch("app.services.sync_status_service.SessionLocal")
+    def test_per_data_type_covered_span_matches_without_a_run_window(
+        self, mock_session_local: MagicMock, db: Session
+    ) -> None:
+        """The per-type spans are the precise answer, and they exist when the run's window does not."""
+        mock_session_local.return_value.__enter__.return_value = db
+        user = UserFactory()
+        event = _event(user.id, run_id="sdk_batch")
+        try_persist_run(event)
+        try_record_data_types(
+            event.run_id,
+            [
+                DataTypeOutcome(
+                    data_type="heart_rate",
+                    kind=DataTypeKind.SERIES,
+                    status=SyncStatus.SUCCESS,
+                    covered_start=datetime(2026, 3, 5, tzinfo=timezone.utc),
+                    covered_end=datetime(2026, 3, 9, tzinfo=timezone.utc),
+                )
+            ],
+            scope=SyncScope.HISTORICAL,
+        )
+
+        assert [
+            r.run_key for r in list_stored_runs(db, user.id, covered_from=self.MARCH[0], covered_to=self.MARCH[1])
+        ] == ["sdk_batch"]
+        assert list_stored_runs(db, user.id, covered_to=datetime(2026, 3, 1, tzinfo=timezone.utc)) == []

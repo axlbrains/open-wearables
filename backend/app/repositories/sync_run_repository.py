@@ -1,13 +1,32 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import ColumnElement, and_, case, func, literal, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import InstrumentedAttribute, selectinload
 
 from app.database import DbSession
 from app.models import SyncRun, SyncRunDataType
 from app.schemas.sync_status import DataTypeOutcome, SyncRunWrite, SyncScope, SyncStatus
+
+
+def _overlaps(
+    start_column: InstrumentedAttribute[datetime | None],
+    end_column: InstrumentedAttribute[datetime | None],
+    range_start: datetime | None,
+    range_end: datetime | None,
+) -> list[ColumnElement[bool]]:
+    """Half-open overlap of a covered span against the asked-for range.
+
+    A row with a NULL bound is excluded rather than assumed: whether an unknown span
+    overlaps the range is undecidable.
+    """
+    conditions: list[ColumnElement[bool]] = [start_column.isnot(None), end_column.isnot(None)]
+    if range_end is not None:
+        conditions.append(start_column < range_end)
+    if range_start is not None:
+        conditions.append(end_column > range_start)
+    return conditions
 
 
 class SyncRunRepository:
@@ -165,12 +184,40 @@ class SyncRunRepository:
         limit: int = 20,
         scope: SyncScope | None = None,
         since: datetime | None = None,
+        provider: str | None = None,
+        covered_from: datetime | None = None,
+        covered_to: datetime | None = None,
     ) -> list[SyncRun]:
+        """Stored runs of one user, newest first.
+
+        ``since`` filters on when a run executed; ``covered_from``/``covered_to`` on the span
+        of data it was meant to cover. A run matches the covered range when its own window
+        overlaps it or when any of its data types covered a span that does — the per-type
+        spans are the more precise answer, and they exist for runs with no recorded window.
+        """
         stmt = select(SyncRun).where(SyncRun.user_id == user_id).order_by(SyncRun.started_at.desc()).limit(limit)
         if scope is not None:
             stmt = stmt.where(SyncRun.scope == scope)
         if since is not None:
             stmt = stmt.where(SyncRun.started_at >= since)
+        if provider is not None:
+            stmt = stmt.where(SyncRun.provider == provider)
+        if covered_from is not None or covered_to is not None:
+            covered_by_data_type = (
+                select(literal(1))
+                .where(
+                    SyncRunDataType.run_id == SyncRun.id,
+                    *_overlaps(SyncRunDataType.covered_start, SyncRunDataType.covered_end, covered_from, covered_to),
+                )
+                .correlate(SyncRun)
+                .exists()
+            )
+            stmt = stmt.where(
+                or_(
+                    and_(*_overlaps(SyncRun.window_start, SyncRun.window_end, covered_from, covered_to)),
+                    covered_by_data_type,
+                )
+            )
         return list(db_session.execute(stmt).scalars().unique().all())
 
 

@@ -193,3 +193,39 @@ class TestRedisHistoryTtl:
         ttl = client.ttl(f"sync:status:user:{user_id}:recent")
         assert ttl is not None
         assert int(ttl) > 0
+
+
+class TestRunIndexIsBounded:
+    """The run index is trimmed on write and read newest-first, so it cannot grow forever."""
+
+    def test_runs_older_than_the_retention_window_are_dropped(self, user_id: str) -> None:
+        client = get_redis_client()
+        runs_key = sync_status_service._user_runs_key(user_id)
+        stale = time.time() - sync_status_service.HISTORY_TTL_SECONDS - 60
+        client.zadd(runs_key, {"pull_ancient": stale})
+
+        sync_status_service.emit(_build_event(user_id))
+
+        assert client.zscore(runs_key, "pull_ancient") is None
+        assert client.zcard(runs_key) == 1
+
+    def test_only_the_newest_runs_are_read(self, user_id: str) -> None:
+        run_ids = [sync_status_service.new_run_id() for _ in range(5)]
+        for run_id in run_ids:
+            sync_status_service.emit(_build_event(user_id, run_id=run_id))
+
+        summaries = sync_status_service.get_run_summaries(user_id, limit=2)
+
+        assert [s.run_id for s in summaries] == run_ids[-1:-3:-1]
+
+    def test_expired_run_keys_are_skipped(self, user_id: str) -> None:
+        """A run whose own key aged out leaves the index without breaking the read."""
+        gone = sync_status_service.new_run_id()
+        sync_status_service.emit(_build_event(user_id, run_id=gone))
+        alive = _build_event(user_id)
+        sync_status_service.emit(alive)
+        get_redis_client().delete(sync_status_service._run_key(gone))
+
+        summaries = sync_status_service.get_run_summaries(user_id)
+
+        assert [s.run_id for s in summaries] == [alive.run_id]

@@ -18,7 +18,7 @@ Channels:
 
 Keys (all TTL'd to ``HISTORY_TTL_SECONDS``):
 - ``sync:status:user:<user_id>:recent``     — list of JSON events (LPUSH)
-- ``sync:status:user:<user_id>:runs``       — set of run_ids
+- ``sync:status:user:<user_id>:runs_by_time`` — run_ids scored by event time (ZADD)
 - ``sync:status:run:<run_id>``              — JSON-encoded latest event
 """
 
@@ -28,7 +28,7 @@ import time
 from collections.abc import Generator
 from contextlib import suppress
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from app.config import settings
@@ -71,8 +71,15 @@ def _user_recent_key(user_id: str | UUID) -> str:
     return f"sync:status:user:{user_id}:recent"
 
 
+# Run ids scored by the time of their latest event: trimmed on write and read newest-first,
+# so the index follows the retention window rather than the user's lifetime activity. The key
+# name differs from the plain set it replaces, so old set-typed keys expire unread.
+_USER_RUNS_KEY_TEMPLATE = "sync:status:user:{user_id}:runs_by_time"
+_USER_RUNS_KEY_PATTERN = _USER_RUNS_KEY_TEMPLATE.format(user_id="*")
+
+
 def _user_runs_key(user_id: str | UUID) -> str:
-    return f"sync:status:user:{user_id}:runs"
+    return _USER_RUNS_KEY_TEMPLATE.format(user_id=user_id)
 
 
 def _run_key(run_id: str) -> str:
@@ -202,12 +209,24 @@ def list_stored_runs(
     limit: int = 20,
     scope: SyncScope | None = None,
     since: datetime | None = None,
+    provider: str | None = None,
+    covered_from: datetime | None = None,
+    covered_to: datetime | None = None,
 ) -> list[SyncRunRecord]:
     """Stored runs for a user, newest first.
 
     Reads Postgres rather than the Redis buffer, so it is not capped at 24h.
     """
-    runs = sync_run_repository.list_for_user(db, user_id, limit=limit, scope=scope, since=since)
+    runs = sync_run_repository.list_for_user(
+        db,
+        user_id,
+        limit=limit,
+        scope=scope,
+        since=since,
+        provider=provider,
+        covered_from=covered_from,
+        covered_to=covered_to,
+    )
     return [SyncRunRecord.model_validate(run) for run in runs]
 
 
@@ -268,11 +287,14 @@ def emit(event: SyncStatusEvent) -> None:
         payload = event.model_dump_json()
         user_id = str(event.user_id)
 
+        scored_at = event.timestamp.timestamp()
+
         pipe = client.pipeline(transaction=False)
         pipe.lpush(_user_recent_key(user_id), payload)
         pipe.ltrim(_user_recent_key(user_id), 0, MAX_RECENT_EVENTS - 1)
         pipe.expire(_user_recent_key(user_id), HISTORY_TTL_SECONDS)
-        pipe.sadd(_user_runs_key(user_id), event.run_id)
+        pipe.zadd(_user_runs_key(user_id), {event.run_id: scored_at})
+        pipe.zremrangebyscore(_user_runs_key(user_id), "-inf", scored_at - HISTORY_TTL_SECONDS)
         pipe.expire(_user_runs_key(user_id), HISTORY_TTL_SECONDS)
         pipe.set(_run_key(event.run_id), payload, ex=HISTORY_TTL_SECONDS)
         pipe.publish(_user_channel(user_id), payload)
@@ -431,63 +453,69 @@ def get_recent_events(user_id: str | UUID, limit: int = 50) -> list[SyncStatusEv
 def get_run_summaries(user_id: str | UUID, limit: int = 20) -> list[SyncRunSummary]:
     """Aggregate recent events into per-run summaries (newest first).
 
-    Reads the per-user runs set to discover all known run IDs, then fetches
-    the latest event for each run from its dedicated hash key.  This avoids
-    the hard ceiling imposed by reading only the capped recent-events list
-    (``MAX_RECENT_EVENTS`` raw events / ~4 events-per-run ≈ 50 runs max).
+    Reads the newest ``limit`` run ids from the per-user runs index, then fetches the latest
+    event of each from its own key. Cost follows the page asked for rather than everything
+    the user has ever synced, and it is not capped by the recent-events list
+    (``MAX_RECENT_EVENTS`` raw events / ~4 events-per-run ≈ 50 runs).
 
-    Terminal events (completed / failed / cancelled) don't carry
-    ``started_at``; we recover it by scanning the recent-events list once
-    and building a run → started_at lookup so duration can be calculated.
+    Terminal events (completed / failed / cancelled) don't carry ``started_at``; it is
+    recovered from the recent-events list, which is only read when some run needs it.
     """
     client = get_redis_client()
 
-    raw_run_ids: set[str | bytes] = client.smembers(_user_runs_key(user_id))
+    raw_run_ids = cast(list[str | bytes], client.zrevrange(_user_runs_key(user_id), 0, max(0, limit - 1)))
     if not raw_run_ids:
         return []
 
     run_ids = [r if isinstance(r, str) else r.decode("utf-8") for r in raw_run_ids]
-
-    # Build started_at lookup from the recent-events list.  Terminal events
-    # don't carry started_at, so we need this to compute run duration.
-    started_at_by_run: dict[str, datetime] = {}
-    for evt in get_recent_events(user_id, limit=MAX_RECENT_EVENTS):
-        if evt.started_at is not None and evt.run_id not in started_at_by_run:
-            started_at_by_run[evt.run_id] = evt.started_at
 
     pipe = client.pipeline(transaction=False)
     for rid in run_ids:
         pipe.get(_run_key(rid))
     raw_events = pipe.execute()
 
-    summaries: list[SyncRunSummary] = []
+    events: list[SyncStatusEvent] = []
     for item in raw_events:
         if not item:
             continue
         with suppress(ValueError, TypeError):
-            event = SyncStatusEvent.model_validate_json(item)
-            summaries.append(
-                SyncRunSummary(
-                    run_id=event.run_id,
-                    user_id=event.user_id,
-                    provider=event.provider,
-                    source=str(event.source),
-                    stage=str(event.stage),
-                    status=str(event.status),
-                    message=event.message,
-                    progress=event.progress,
-                    items_processed=event.items_processed,
-                    items_total=event.items_total,
-                    error=event.error,
-                    started_at=event.started_at or started_at_by_run.get(event.run_id),
-                    ended_at=event.ended_at,
-                    primary_user_id=event.primary_user_id,
-                    last_update=event.timestamp,
-                )
+            events.append(SyncStatusEvent.model_validate_json(item))
+
+    started_at_by_run = _started_at_by_run(user_id) if any(e.started_at is None for e in events) else {}
+
+    summaries: list[SyncRunSummary] = []
+    for event in events:
+        summaries.append(
+            SyncRunSummary(
+                run_id=event.run_id,
+                user_id=event.user_id,
+                provider=event.provider,
+                source=str(event.source),
+                stage=str(event.stage),
+                status=str(event.status),
+                message=event.message,
+                progress=event.progress,
+                items_processed=event.items_processed,
+                items_total=event.items_total,
+                error=event.error,
+                started_at=event.started_at or started_at_by_run.get(event.run_id),
+                ended_at=event.ended_at,
+                primary_user_id=event.primary_user_id,
+                last_update=event.timestamp,
             )
+        )
 
     summaries.sort(key=lambda s: s.last_update, reverse=True)
-    return summaries[:limit]
+    return summaries
+
+
+def _started_at_by_run(user_id: str | UUID) -> dict[str, datetime]:
+    """When each recent run started, for terminal events that no longer carry it."""
+    started_at: dict[str, datetime] = {}
+    for event in get_recent_events(user_id, limit=MAX_RECENT_EVENTS):
+        if event.started_at is not None and event.run_id not in started_at:
+            started_at[event.run_id] = event.started_at
+    return started_at
 
 
 def get_all_run_summaries(
@@ -507,7 +535,7 @@ def get_all_run_summaries(
     if user_id_filter:
         user_ids = [str(user_id_filter)]
     else:
-        pattern = "sync:status:user:*:runs"
+        pattern = _USER_RUNS_KEY_PATTERN
         user_ids = []
         cursor: int = 0
         while True:

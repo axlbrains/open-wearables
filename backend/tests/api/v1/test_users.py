@@ -8,6 +8,7 @@ Tests cover:
 - PATCH /api/v1/users/{user_id} - update user
 - DELETE /api/v1/users/{user_id} - delete user
 - Connection expansion, connection filters, and sorting on the list endpoint
+- The sync projection and women's health flag on the detail endpoint
 """
 
 from datetime import datetime, timezone
@@ -20,7 +21,14 @@ from sqlalchemy.orm import Session
 
 from app.models import User
 from app.schemas.auth import ConnectionStatus
-from tests.factories import ApiKeyFactory, DeveloperFactory, UserConnectionFactory, UserFactory
+from tests.factories import (
+    ApiKeyFactory,
+    DataSourceFactory,
+    DeveloperFactory,
+    EventRecordFactory,
+    UserConnectionFactory,
+    UserFactory,
+)
 from tests.utils import api_key_headers, developer_auth_headers
 
 
@@ -727,3 +735,96 @@ class TestListUsersFilters:
         ordered = [item["id"] for item in response.json()["items"]]
         assert ordered.index(str(users["garmin"].id)) < ordered.index(str(users["whoop"].id))
         assert ordered[-1] == str(users["lonely"].id)
+
+
+class TestGetUserDetailProjection:
+    """Tests for the sync projection and expansions on GET /api/v1/users/{user_id}."""
+
+    @pytest.fixture
+    def headers(self) -> dict[str, str]:
+        developer = DeveloperFactory(email="detail@example.com", password="test123")
+        return api_key_headers(ApiKeyFactory(developer=developer).id)
+
+    def test_reports_last_sync_and_active_connection(
+        self, client: TestClient, api_v1_prefix: str, headers: dict
+    ) -> None:
+        """The detail endpoint must not know less about a user than the list does."""
+        user = UserFactory(email="synced@example.com")
+        UserConnectionFactory(
+            user=user, provider="whoop", last_synced_at=datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+        )
+        UserConnectionFactory(
+            user=user,
+            provider="garmin",
+            status=ConnectionStatus.REVOKED,
+            last_synced_at=datetime(2026, 4, 1, 12, 0, tzinfo=timezone.utc),
+        )
+
+        response = client.get(f"{api_v1_prefix}/users/{user.id}", headers=headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["last_synced_at"] == "2026-04-01T12:00:00Z"
+        assert data["last_synced_provider"] == "garmin"
+        assert data["has_active_connection"] is True
+
+    def test_unconnected_user_reports_no_sync(self, client: TestClient, api_v1_prefix: str, headers: dict) -> None:
+        user = UserFactory(email="fresh@example.com")
+
+        response = client.get(f"{api_v1_prefix}/users/{user.id}", headers=headers)
+
+        data = response.json()
+        assert data["last_synced_at"] is None
+        assert data["last_synced_provider"] is None
+        assert data["has_active_connection"] is False
+
+    def test_connections_absent_by_default(self, client: TestClient, api_v1_prefix: str, headers: dict) -> None:
+        user = UserFactory(email="nodetailconn@example.com")
+        UserConnectionFactory(user=user, provider="garmin")
+
+        response = client.get(f"{api_v1_prefix}/users/{user.id}", headers=headers)
+
+        assert "connections" not in response.json()
+
+    def test_include_connections_returns_every_status(
+        self, client: TestClient, api_v1_prefix: str, headers: dict
+    ) -> None:
+        user = UserFactory(email="detailconn@example.com")
+        UserConnectionFactory(user=user, provider="whoop", status=ConnectionStatus.REVOKED)
+        UserConnectionFactory(
+            user=user, provider="garmin", last_synced_at=datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+        )
+
+        response = client.get(f"{api_v1_prefix}/users/{user.id}?include=connections", headers=headers)
+
+        assert response.status_code == 200
+        assert response.json()["connections"] == [
+            {"provider": "garmin", "status": "active", "last_synced_at": "2026-03-01T12:00:00Z"},
+            {"provider": "whoop", "status": "revoked", "last_synced_at": None},
+        ]
+
+    def test_womens_health_flag_set_by_menstrual_cycle_events(
+        self, client: TestClient, api_v1_prefix: str, headers: dict
+    ) -> None:
+        user = UserFactory(email="cycle@example.com")
+        EventRecordFactory(
+            data_source=DataSourceFactory(user=user),
+            category="menstrual_cycle",
+            type="period",
+        )
+
+        response = client.get(f"{api_v1_prefix}/users/{user.id}", headers=headers)
+
+        assert response.json()["has_womens_health_data"] is True
+
+    def test_womens_health_flag_ignores_other_categories_and_users(
+        self, client: TestClient, api_v1_prefix: str, headers: dict
+    ) -> None:
+        user = UserFactory(email="nocycle@example.com")
+        other = UserFactory(email="othercycle@example.com")
+        EventRecordFactory(data_source=DataSourceFactory(user=user), category="workout", type="running")
+        EventRecordFactory(data_source=DataSourceFactory(user=other), category="menstrual_cycle", type="period")
+
+        response = client.get(f"{api_v1_prefix}/users/{user.id}", headers=headers)
+
+        assert response.json()["has_womens_health_data"] is False
