@@ -4,14 +4,14 @@ import warnings
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import quote
 
 if TYPE_CHECKING:
     from app.schemas.enums import ProviderName
 
 from pydantic import AnyHttpUrl, Field, SecretStr, ValidationInfo, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.utils.config_utils import (
     EncryptedField,
@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     # Pre-0.4.2 behaviour. Set to false once your integration calls /sync/historical explicitly.
     # Will default to false in a future release.
     historical_sync_on_connect: bool = True
+
+    # Delayed-retry backoff for Strava per-sample stream ingestion when the activity
+    # webhook precedes Strava's stream processing. One retry per entry, seconds after
+    # the previous attempt; the list length is the attempt budget. Env accepts JSON
+    # ("[300, 900, 2700]") or a comma-separated string ("300,900,2700").
+    strava_stream_retry_countdown_seconds: Annotated[list[int], NoDecode] = [300, 900, 2700]
 
     # Whether to ingest per-second workout samples (speed, cadence, power, GPS, etc.) into
     # data_point_series on workout webhook arrival. Significantly increases DB storage.
@@ -248,6 +254,20 @@ class Settings(BaseSettings):
 
         # This should never be reached given the type annotation, but ensures type safety
         raise ValueError(f"Unexpected type for cors_origins: {type(v)}")
+
+    @field_validator("strava_stream_retry_countdown_seconds", mode="before")
+    @classmethod
+    def _parse_stream_retry_countdowns(cls, v: Any) -> Any:
+        # NoDecode disables pydantic-settings' JSON pre-parse; accept JSON or a
+        # plain comma-separated env value ("300,900,2700").
+        if isinstance(v, str):
+            stripped = v.strip()
+            if stripped.startswith("["):
+                import json
+
+                return json.loads(stripped)
+            return [int(part) for part in stripped.split(",") if part.strip()]
+        return v
 
     @field_validator("pull_sync_lookback", mode="before")
     @classmethod
