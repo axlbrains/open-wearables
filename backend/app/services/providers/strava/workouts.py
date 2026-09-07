@@ -428,6 +428,8 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         db: DbSession,
         activity: StravaActivityJSON,
         user_id: UUID,
+        *,
+        stream_retry_attempt: int = 1,
     ) -> list[UUID]:
         """Process a single activity from webhook and save to database.
 
@@ -435,6 +437,9 @@ class StravaWorkouts(BaseWorkoutsTemplate):
             db: Database session
             activity: Parsed Strava activity data
             user_id: Internal user ID (already mapped from Strava athlete ID)
+            stream_retry_attempt: which delayed stream-ingest attempt to schedule
+                if streams are still empty (1 on the webhook path; the retry task
+                passes attempt+1 so the backoff chain terminates)
 
         Returns:
             List of created event record IDs
@@ -465,8 +470,21 @@ class StravaWorkouts(BaseWorkoutsTemplate):
             # triggers tasks/__init__, which imports tasks that import the provider
             # factory — and the factory imports this module (same pattern as
             # outgoing_webhooks/events._dispatch).
-            from app.integrations.celery.tasks.strava_stream_retry_task import schedule_stream_retry
+            from app.integrations.celery.tasks.strava_stream_retry_task import (
+                max_stream_retry_attempts,
+                schedule_stream_retry,
+            )
 
-            schedule_stream_retry(str(user_id), str(activity.id), attempt=1)
+            if stream_retry_attempt <= max_stream_retry_attempts():
+                schedule_stream_retry(str(user_id), str(activity.id), attempt=stream_retry_attempt)
+            else:
+                log_structured(
+                    self.logger,
+                    "warning",
+                    "Strava streams still empty after final retry, giving up",
+                    provider="strava",
+                    action="stream_retry_exhausted",
+                    activity_id=str(activity.id),
+                )
 
         return created_ids
