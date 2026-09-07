@@ -135,10 +135,12 @@ class TestEventRecordDetailRepository:
             detail_type="workout",
         )
 
-        # Assert - existing row returned unchanged, not a new/overwritten one
+        # Assert — fork semantics: create() routes through the bulk_create upsert
+        # (INSERT ... ON CONFLICT DO UPDATE), so a re-sync refreshes the fields
+        # instead of returning the stale row (upstream returns 8500 unchanged).
         assert isinstance(duplicate, WorkoutDetails)
         assert duplicate.record_id == first.record_id
-        assert duplicate.steps_count == 8500
+        assert duplicate.steps_count == 9999
 
     def test_create_and_flush_duplicate_returns_existing(self, db: Session) -> None:
         """create_and_flush is idempotent on record_id via its savepoint recovery."""

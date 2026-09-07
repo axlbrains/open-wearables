@@ -21,8 +21,8 @@ _BODY = {
 
 @pytest.fixture
 def mock_task() -> Generator[MagicMock, None, None]:
-    with patch("app.api.routes.v1.sdk_sync.process_sdk_upload") as mock:
-        mock.delay.return_value = None
+    # Fork routes through dispatch_task (Cloud Tasks in prod) instead of raw .delay
+    with patch("app.api.routes.v1.sdk_sync.dispatch_task") as mock:
         yield mock
 
 
@@ -48,7 +48,7 @@ class TestOffloadDisabled:
         mock_put.assert_not_called()
         mock_archive.assert_called_once()
 
-        kwargs = mock_task.delay.call_args[1]
+        kwargs = mock_task.call_args.kwargs["kwargs"]
         assert kwargs["payload_ref"] is None
         assert '"provider": "apple"' in kwargs["content"]
 
@@ -66,7 +66,7 @@ class TestOffloadEnabled:
         # Transport owns the object, so the archival write is not called on top of it.
         mock_archive.assert_not_called()
 
-        kwargs = mock_task.delay.call_args[1]
+        kwargs = mock_task.call_args.kwargs["kwargs"]
         assert kwargs["content"] is None
         assert kwargs["payload_ref"] == _REF
 
@@ -81,4 +81,4 @@ class TestOffloadEnabled:
             response = _sync(client, api_v1_prefix)
 
         assert response.status_code == 503
-        mock_task.delay.assert_not_called()
+        mock_task.assert_not_called()

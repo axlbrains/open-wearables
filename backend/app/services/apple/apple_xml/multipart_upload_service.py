@@ -40,7 +40,6 @@ class MultipartUploadService:
         self.log = log
 
     def _require_client(self) -> Any:
-
         client = get_s3_client()
         if not client:
             raise HTTPException(

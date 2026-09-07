@@ -144,9 +144,7 @@ class TestTransientFailureReschedule:
                 side_effect=RuntimeError("strava 500"),
             ),
             patch("app.integrations.celery.tasks.strava_stream_retry_task.SessionLocal"),
-            patch(
-                "app.integrations.celery.tasks.strava_stream_retry_task.schedule_stream_retry"
-            ) as mock_schedule,
+            patch("app.integrations.celery.tasks.strava_stream_retry_task.schedule_stream_retry") as mock_schedule,
         ):
             retry_strava_stream_ingest(str(uuid4()), "a-1", attempt=1)
         mock_schedule.assert_called_once()
@@ -159,9 +157,7 @@ class TestTransientFailureReschedule:
                 side_effect=RuntimeError("strava 500"),
             ),
             patch("app.integrations.celery.tasks.strava_stream_retry_task.SessionLocal"),
-            patch(
-                "app.integrations.celery.tasks.strava_stream_retry_task.schedule_stream_retry"
-            ) as mock_schedule,
+            patch("app.integrations.celery.tasks.strava_stream_retry_task.schedule_stream_retry") as mock_schedule,
         ):
             retry_strava_stream_ingest(str(uuid4()), "a-1", attempt=MAX_ATTEMPTS)
         mock_schedule.assert_not_called()
