@@ -399,7 +399,7 @@ class TestPolarSleepLateAvailability:
 
         fetched: list[str] = []
 
-        def fake_request(db, user_id, endpoint, **kwargs):
+        def fake_request(db: object, user_id: object, endpoint: str, **kwargs: object) -> dict:
             fetched.append(endpoint)
             return {"date": endpoint.rsplit("/", 1)[-1]}
 
