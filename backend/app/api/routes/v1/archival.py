@@ -9,7 +9,7 @@ from logging import getLogger
 from fastapi import APIRouter, status
 
 from app.database import DbSession
-from app.integrations.celery.tasks.archival_task import run_daily_archival
+from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.utils import ArchivalSettingUpdate, ArchivalSettingWithEstimate
 from app.services import DeveloperDep
 from app.services.archival_service import archival_service
@@ -58,5 +58,5 @@ def update_archival_settings(
 def trigger_archival(
     _developer: DeveloperDep,
 ) -> dict[str, str]:
-    result = run_daily_archival.delay()
-    return {"task_id": result.id, "status": "dispatched"}
+    handle = dispatch_task(RegisteredTask.RUN_DAILY_ARCHIVAL)
+    return {"task_id": handle.id or "", "status": "dispatched"}

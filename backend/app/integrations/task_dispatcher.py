@@ -30,7 +30,10 @@ class TaskDispatchBackend(str, Enum):
 class RegisteredTask(str, Enum):
     CHECK_GARMIN_TRIGGERED_TIMEOUT = "check_garmin_triggered_timeout"
     EMIT_WEBHOOK_EVENT = "emit_webhook_event"
+    FILL_MISSING_RESILIENCE_SCORES = "fill_missing_resilience_scores"
+    FILL_MISSING_SLEEP_SCORES = "fill_missing_sleep_scores"
     FINALIZE_STALE_SLEEPS = "finalize_stale_sleeps"
+    RUN_DAILY_ARCHIVAL = "run_daily_archival"
     GC_STUCK_BACKFILLS = "gc_stuck_backfills"
     COMPLETE_AND_PROCESS_AWS_UPLOAD = "complete_and_process_aws_upload"
     PROCESS_AWS_UPLOAD = "process_aws_upload"
@@ -75,6 +78,18 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
     RegisteredTask.EMIT_WEBHOOK_EVENT: TaskDefinition(
         task_name="app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event",
         callable_path="app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event",
+    ),
+    RegisteredTask.FILL_MISSING_RESILIENCE_SCORES: TaskDefinition(
+        task_name="app.integrations.celery.tasks.fill_missing_resilience_scores_task.fill_missing_resilience_scores",
+        callable_path="app.integrations.celery.tasks.fill_missing_resilience_scores_task.fill_missing_resilience_scores",
+    ),
+    RegisteredTask.FILL_MISSING_SLEEP_SCORES: TaskDefinition(
+        task_name="app.integrations.celery.tasks.fill_missing_sleep_scores_task.fill_missing_sleep_scores",
+        callable_path="app.integrations.celery.tasks.fill_missing_sleep_scores_task.fill_missing_sleep_scores",
+    ),
+    RegisteredTask.RUN_DAILY_ARCHIVAL: TaskDefinition(
+        task_name="app.integrations.celery.tasks.archival_task.run_daily_archival",
+        callable_path="app.integrations.celery.tasks.archival_task.run_daily_archival",
     ),
     RegisteredTask.FINALIZE_STALE_SLEEPS: TaskDefinition(
         task_name="app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps",
