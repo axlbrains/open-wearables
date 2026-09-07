@@ -5,10 +5,10 @@ from uuid import UUID
 
 from celery import shared_task
 
+from app.config import settings
 from app.database import SessionLocal
 from app.integrations.idempotency import idempotent
 from app.models import User
-from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.sync_status import SyncSource, SyncStatus
 from app.services.apple.healthkit.import_service import (
@@ -17,7 +17,9 @@ from app.services.apple.healthkit.import_service import (
 from app.services.apple.healthkit.import_service import (
     import_service as sdk_import_service,
 )
+from app.services.raw_payload_storage import delete_payload_from_s3, get_payload_from_s3
 from app.services.sync_status_service import completed, failed, started
+from app.services.user_connection_service import user_connection_service
 from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
@@ -45,21 +47,25 @@ def _sdk_upload_idem_key(
 @shared_task(queue="sdk_sync")
 @idempotent(key=_sdk_upload_idem_key, ttl_seconds=3600)
 def process_sdk_upload(
-    content: str,
+    content: str | None,
     content_type: str,
     user_id: str,
     provider: str,
     batch_id: str | None = None,
+    payload_ref: str | None = None,
 ) -> dict[str, Any]:
     """
     Process SDK data import asynchronously.
 
     Args:
-        content: The request content as string (JSON or multipart data)
+        content: The request content as string (JSON or multipart data). None when the
+            payload was offloaded to S3 - see ``payload_ref``.
         content_type: The content type header value
         user_id: User ID to associate with the data
         provider: Import provider - "apple", "samsung", "google"
         batch_id: Unique batch identifier for tracking (optional for backwards compatibility)
+        payload_ref: ``s3://bucket/key`` of the stored payload. When set (and ``content`` is
+            None) the body is loaded from S3 here, so it never travels through the broker.
 
     Returns:
         Dictionary with status_code and response message
@@ -67,6 +73,37 @@ def process_sdk_upload(
     # Generate batch_id if not provided (backwards compatibility)
     if not batch_id:
         batch_id = str(uuid.uuid4())
+
+    # Payload was offloaded to S3, so the body never travelled through the broker. A read
+    # failure propagates: boto3 has already retried the transient cases, and CeleryIntegration
+    # reports the exception to Sentry.
+    if content is None and payload_ref:
+        try:
+            content = get_payload_from_s3(payload_ref)
+        except Exception:
+            log_structured(
+                logger,
+                "error",
+                "Failed to load SDK payload from S3",
+                provider=provider,
+                action="load_payload_ref",
+                batch_id=batch_id,
+                user_id=user_id,
+                payload_ref=payload_ref,
+            )
+            raise
+
+    if content is None:
+        log_structured(
+            logger,
+            "warning",
+            "No payload content or reference provided",
+            provider=provider,
+            action="validate_payload_present",
+            batch_id=batch_id,
+            user_id=user_id,
+        )
+        return {"status": "error", "reason": "missing_payload", "batch_id": batch_id}
 
     # Validate user_id format
     try:
@@ -119,9 +156,9 @@ def process_sdk_upload(
     )
 
     with SessionLocal() as db:
-        # Ensure SDK connection exists for this user (SDK-based, no OAuth tokens)
-        connection_repo = UserConnectionRepository()
-        connection_repo.ensure_sdk_connection(db, user_uuid, provider)
+        # Ensure SDK connection exists for this user (SDK-based, no OAuth tokens).
+        # Goes through the service so a new/reactivated connection emits connection.created.
+        user_connection_service.ensure_sdk_connection(db, user_uuid, provider)
 
         # Select the appropriate import service based on source
         import_service = _get_import_service(provider)
@@ -149,6 +186,8 @@ def process_sdk_upload(
 
         status_code = result.get("status_code", 200)
         records_saved = int(result.get("records_saved", 0) or 0)
+        records_inserted = int(result.get("records_inserted", 0) or 0)
+        records_updated = int(result.get("records_updated", 0) or 0)
         workouts_saved = int(result.get("workouts_saved", 0) or 0)
         sleep_saved = int(result.get("sleep_saved", 0) or 0)
         dropped_count = int(result.get("dropped_count", 0) or 0)
@@ -156,7 +195,8 @@ def process_sdk_upload(
         items_total = records_saved + workouts_saved + sleep_saved
 
         if isinstance(status_code, int) and 200 <= status_code < 300:
-            message = f"{provider.capitalize()} batch saved"
+            # Same wording as webhook_push_task; records_saved counts samples submitted.
+            message = f"{provider.capitalize()} batch saved: {records_inserted} new, {records_updated} updated"
             if dropped_count:
                 message += f" ({dropped_count} record(s) dropped by validation)"
             completed(
@@ -170,12 +210,18 @@ def process_sdk_upload(
                 metadata={
                     "batch_id": batch_id,
                     "records_saved": records_saved,
+                    "inserted": records_inserted,
+                    "updated": records_updated,
                     "workouts_saved": workouts_saved,
                     "sleep_saved": sleep_saved,
                     "types": types,
                     "dropped_count": dropped_count,
                 },
             )
+            if payload_ref and settings.raw_payload_storage == "disabled":
+                # Transport-only copy and the data is committed, so drop it. A failed batch
+                # keeps its payload for diagnosis.
+                delete_payload_from_s3(payload_ref)
         else:
             failed(
                 user_uuid,

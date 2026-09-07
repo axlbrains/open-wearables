@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from logging import Logger, getLogger
 from uuid import UUID, uuid4
@@ -10,6 +10,7 @@ from app.database import DbSession
 from app.models import (
     DataPointSeries,
     DataSource,
+    DetailType,
     EventRecord,
     EventRecordDetail,
     HealthScore,
@@ -24,16 +25,14 @@ from app.repositories import (
     EventRecordRepository,
     HealthScoreRepository,
 )
-from app.schemas.enums import WORKOUTS_WITH_PACE, HealthScoreCategory, ProviderName
+from app.schemas.enums import WORKOUTS_WITH_PACE, HealthScoreCategory
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
     EventRecordQueryParams,
     EventRecordResponse,
     EventRecordUpdate,
-    HealthScoreCreate,
     MenstrualCycleDetailCreate,
-    ScoreComponent,
 )
 from app.schemas.model_crud.activities.sleep import SleepStage
 from app.schemas.responses.activity import (
@@ -124,7 +123,7 @@ class EventRecordService(
         self,
         db_session: DbSession,
         detail: EventRecordDetailCreate,
-        detail_type: str = "workout",
+        detail_type: DetailType = "workout",
     ) -> EventRecordDetail:
         result = self.event_record_detail_repo.create(db_session, detail, detail_type=detail_type)
         # event_record_detail_repo.create commits internally, so data is already persisted.
@@ -137,17 +136,22 @@ class EventRecordService(
             if data_source is not None:
                 self._emit_event_record_webhook(record, data_source, detail)
 
-        return result  # ty:ignore[invalid-return-type]
+        return result
 
     @staticmethod
-    def _local_sleep_date(start_datetime: datetime, zone_offset: str | None) -> date:
-        """Return the local calendar date of a sleep session start (mirrors SQL logic in fill task)."""
-        dt = start_datetime if start_datetime.tzinfo is not None else start_datetime.replace(tzinfo=timezone.utc)
+    def _to_local(dt: datetime, zone_offset: str | None) -> datetime:
+        """Shift a datetime into the session's local zone (mirrors SQL logic in fill task)."""
+        dt = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
         if zone_offset is not None:
             sign = 1 if zone_offset[0] == "+" else -1
             hours, minutes = int(zone_offset[1:3]), int(zone_offset[4:6])
             dt = dt.astimezone(timezone(timedelta(hours=sign * hours, minutes=sign * minutes)))
-        return dt.date()
+        return dt
+
+    @classmethod
+    def _local_sleep_date(cls, start_datetime: datetime, zone_offset: str | None) -> date:
+        """Return the local calendar date of a sleep session start."""
+        return cls._to_local(start_datetime, zone_offset).date()
 
     def _recompute_sleep_scores(
         self,
@@ -161,31 +165,48 @@ class EventRecordService(
         date when a session shifts across midnight.  The session data has already
         been flushed, so sleep_score_service sees up-to-date rows within the
         same transaction.
+
+        Scores per session rather than per date, matching fill_missing_sleep_scores.
+        The two writers have to agree: recorded_at is what the unique constraint keys
+        on, so a second convention here produces a duplicate score instead of
+        replacing the existing one.
         """
-        for d in sleep_dates:
-            self.health_score_repo.delete_for_user_date(db_session, user_id, d, HealthScoreCategory.SLEEP)
-        scores = sleep_score_service.get_sleep_scores_for_date_range(db_session, user_id, list(sleep_dates))
-        if not scores:
-            return
-        creators = [
-            HealthScoreCreate(
-                id=uuid4(),
-                user_id=user_id,
-                data_source_id=None,
-                provider=ProviderName.INTERNAL,
-                category=HealthScoreCategory.SLEEP,
-                value=result.overall_score,
-                recorded_at=datetime(d.year, d.month, d.day, tzinfo=timezone.utc),
-                components={
-                    "duration": ScoreComponent(value=result.breakdown.duration.score),
-                    "stages": ScoreComponent(value=result.breakdown.stages.score),
-                    "consistency": ScoreComponent(value=result.breakdown.consistency.score),
-                    "interruptions": ScoreComponent(value=result.breakdown.interruptions.score),
-                },
+        # Widened by a day either side so a session whose local start lands on a target
+        # date is still inside the window whatever its zone offset.
+        window_start = datetime.combine(min(sleep_dates), time.min, tzinfo=timezone.utc) - timedelta(days=1)
+        window_end = datetime.combine(max(sleep_dates), time.min, tzinfo=timezone.utc) + timedelta(days=2)
+
+        scorable = [
+            (record, self._to_local(record.end_datetime, record.zone_offset))
+            for record, details in self.crud.get_sleep_records_with_details(
+                db_session, user_id, window_start, window_end
             )
-            for d, result in scores.items()
+            if details is not None and not details.is_nap and details.sleep_total_duration_minutes
         ]
-        self.health_score_repo.bulk_create(db_session, creators)
+
+        # A session running past midnight is scored on the day it ends, so clear the wake
+        # dates of the sessions the caller named as well as the start dates themselves.
+        stale_dates = sleep_dates | {
+            local_end.date()
+            for record, local_end in scorable
+            if self._local_sleep_date(record.start_datetime, record.zone_offset) in sleep_dates
+        }
+
+        # Rebuild every session scored on a cleared date, not just the caller's — an
+        # earlier session ending that morning is scored there too and would otherwise
+        # be deleted without being rewritten.
+        sessions = [
+            (record.id, record.data_source_id, local_end)
+            for record, local_end in scorable
+            if local_end.date() in stale_dates
+        ]
+
+        for d in stale_dates:
+            self.health_score_repo.delete_for_user_date(db_session, user_id, d, HealthScoreCategory.SLEEP)
+
+        creators = sleep_score_service.build_internal_sleep_scores(db_session, user_id, sessions)
+        if creators:
+            self.health_score_repo.bulk_create(db_session, creators)
 
     def find_adjacent_sleep_record(
         self,
@@ -233,6 +254,12 @@ class EventRecordService(
                     final_detail.sleep_rem_minutes,
                 ]
             )
+            device_type = None
+            if svix_service.is_enabled() and result.data_source_id is not None:
+                data_source = self.data_source_repo.get(db_session, result.data_source_id)
+                if data_source is not None:
+                    device_type = data_source.device_type
+
             on_sleep_created(
                 record_id=result.id,
                 user_id=user_id,
@@ -252,6 +279,18 @@ class EventRecordService(
                 if has_stages
                 else None,
                 is_nap=final_detail.is_nap,
+                source_app=record.source,
+                device_type=device_type,
+                sleep_duration_seconds=(
+                    final_detail.sleep_total_duration_minutes * 60
+                    if final_detail.sleep_total_duration_minutes is not None
+                    else None
+                ),
+                sleep_stage_intervals=(
+                    [stage.model_dump(mode="json") for stage in final_detail.sleep_stages]
+                    if final_detail.sleep_stages
+                    else None
+                ),
             )
         return result
 
@@ -529,6 +568,18 @@ class EventRecordService(
                     if has_stages
                     else None,
                     is_nap=detail.is_nap,
+                    source_app=data_source.source,
+                    device_type=data_source.device_type,
+                    sleep_duration_seconds=(
+                        detail.sleep_total_duration_minutes * 60
+                        if detail.sleep_total_duration_minutes is not None
+                        else None
+                    ),
+                    sleep_stage_intervals=(
+                        [stage.model_dump(mode="json") for stage in detail.sleep_stages]
+                        if detail.sleep_stages
+                        else None
+                    ),
                 )
             case "menstrual_cycle":
                 mcd = detail if isinstance(detail, MenstrualCycleDetailCreate) else None

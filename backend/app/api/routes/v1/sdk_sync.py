@@ -4,12 +4,14 @@ from logging import getLogger
 
 from fastapi import APIRouter, HTTPException, status
 
+from app.config import settings
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.providers.mobile_sdk import SyncRequest
 from app.schemas.responses.upload import UploadDataResponse
-from app.services.raw_payload_storage import store_raw_payload
+from app.services.raw_payload_storage import put_payload_to_s3, store_raw_payload
 from app.utils.api_utils import inline_schema_defs
 from app.utils.auth import SDKAuthDep
+from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
 router = APIRouter()
@@ -107,22 +109,49 @@ def sync_sdk_data(
 
     content_str = json.dumps(body)
 
-    store_raw_payload(
-        source="sdk",
-        provider=provider,
-        payload=content_str,
-        user_id=user_id,
-        trace_id=batch_id,
-    )
+    offload = settings.sdk_payload_s3_offload
+    payload_ref: str | None = None
+
+    if offload:
+        payload_ref = put_payload_to_s3(
+            source="sdk", provider=provider, payload=content_str, user_id=user_id, trace_id=batch_id
+        )
+    else:
+        store_raw_payload(source="sdk", provider=provider, payload=content_str, user_id=user_id, trace_id=batch_id)
+
+    if offload and payload_ref is None:
+        # Fail loudly: falling back to an inline body is what fills the broker until Redis
+        # hits maxmemory, and the SDK can retry the upload.
+        log_structured(
+            logger,
+            "error",
+            "Failed to persist SDK payload to S3; rejecting batch",
+            action="sdk_payload_persist_failed",
+            batch_id=batch_id,
+            user_id=user_id,
+            provider=provider,
+        )
+        exc = HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Failed to persist payload; please retry.",
+        )
+        log_and_capture_error(
+            exc,
+            logger,
+            "Failed to persist SDK payload to S3; rejecting batch",
+            extra={"batch_id": batch_id, "user_id": user_id, "provider": provider},
+        )
+        raise exc
 
     dispatch_task(
         RegisteredTask.PROCESS_SDK_UPLOAD,
         kwargs={
-            "content": content_str,
+            "content": None if offload else content_str,
             "content_type": "application/json",
             "user_id": user_id,
             "provider": provider,
             "batch_id": batch_id,
+            "payload_ref": payload_ref,
         },
         dedup_key=f"sdk_upload:{batch_id}",
     )

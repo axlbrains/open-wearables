@@ -126,6 +126,12 @@ class TestWebhookEmit:
             efficiency_percent=85.0,
             stages={"deep_minutes": 90, "rem_minutes": 60, "light_minutes": 120, "awake_minutes": 10},
             is_nap=False,
+            source_app="oura",
+            device_type="ring",
+            sleep_duration_seconds=27000,
+            sleep_stage_intervals=[
+                {"stage": "light", "start_time": "2026-01-01T22:00:00", "end_time": "2026-01-01T22:30:00"}
+            ],
         )
         mock_dispatch.assert_called_once()
         call = mock_dispatch.call_args
@@ -133,6 +139,11 @@ class TestWebhookEmit:
         payload = _payload_of(call)
         assert payload["data"]["efficiency_percent"] == 85.0
         assert payload["data"]["stages"]["deep_minutes"] == 90
+        assert payload["data"]["sleep_duration_seconds"] == 27000
+        assert payload["data"]["sleep_stage_intervals"][0]["stage"] == "light"
+        assert payload["data"]["source"]["source"] == "oura"
+        assert payload["data"]["source"]["device_type"] == "ring"
+        assert payload["data"]["source"]["device_name"] == "Oura Ring Gen3"
 
     @patch("app.integrations.task_dispatcher.dispatch_task")
     def test_on_timeseries_batch_saved_dispatches(self, mock_dispatch: MagicMock) -> None:

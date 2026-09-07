@@ -32,6 +32,7 @@ class RegisteredTask(str, Enum):
     EMIT_WEBHOOK_EVENT = "emit_webhook_event"
     FINALIZE_STALE_SLEEPS = "finalize_stale_sleeps"
     GC_STUCK_BACKFILLS = "gc_stuck_backfills"
+    COMPLETE_AND_PROCESS_AWS_UPLOAD = "complete_and_process_aws_upload"
     PROCESS_AWS_UPLOAD = "process_aws_upload"
     PROCESS_SDK_UPLOAD = "process_sdk_upload"
     PROCESS_SDK_UPLOAD_REFERENCE = "process_sdk_upload_reference"
@@ -87,6 +88,10 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
     RegisteredTask.PROCESS_AWS_UPLOAD: TaskDefinition(
         task_name="app.integrations.celery.tasks.process_aws_upload_task.process_aws_upload",
         callable_path="app.integrations.celery.tasks.process_aws_upload_task.process_aws_upload",
+    ),
+    RegisteredTask.COMPLETE_AND_PROCESS_AWS_UPLOAD: TaskDefinition(
+        task_name="app.integrations.celery.tasks.process_aws_upload_task.complete_and_process_aws_upload",
+        callable_path="app.integrations.celery.tasks.process_aws_upload_task.complete_and_process_aws_upload",
     ),
     RegisteredTask.PROCESS_SDK_UPLOAD: TaskDefinition(
         task_name="app.integrations.celery.tasks.process_sdk_upload_task.process_sdk_upload",

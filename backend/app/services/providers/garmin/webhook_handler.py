@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException, Request
 
+from app.config import settings
 from app.database import DbSession
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories import UserConnectionRepository
@@ -64,7 +65,8 @@ class GarminWebhookHandler(BaseWebhookHandler):
 
     Garmin does not sign request bodies with HMAC; it identifies itself via the
     ``garmin-client-id`` request header.  ``verify_signature`` checks that this
-    header is present.
+    header matches the configured ``settings.garmin_client_id`` (constant-time),
+    failing closed when the value is not configured.
     """
 
     def __init__(self, garmin_workouts: GarminWorkouts, garmin_247: Garmin247Data) -> None:
@@ -89,8 +91,19 @@ class GarminWebhookHandler(BaseWebhookHandler):
     # ------------------------------------------------------------------
 
     def verify_signature(self, request: Request, body: bytes) -> bool:
-        client_id = request.headers.get("garmin-client-id")
-        if not client_id:
+        expected = settings.garmin_client_id
+        if not expected:
+            log_structured(
+                logger,
+                "error",
+                "GARMIN_CLIENT_ID not configured; rejecting webhook",
+                provider="garmin",
+                action="webhook_signature_missing_secret",
+            )
+            return False
+
+        provided = request.headers.get("garmin-client-id", "")
+        if not provided:
             log_structured(
                 logger,
                 "warning",
@@ -99,6 +112,17 @@ class GarminWebhookHandler(BaseWebhookHandler):
                 action="webhook_signature_invalid",
             )
             return False
+
+        if not self._verify_token(expected, provided):
+            log_structured(
+                logger,
+                "warning",
+                "garmin-client-id header does not match configured value",
+                provider="garmin",
+                action="webhook_signature_invalid",
+            )
+            return False
+
         return True
 
     def parse_payload(self, body: bytes) -> dict[str, Any]:

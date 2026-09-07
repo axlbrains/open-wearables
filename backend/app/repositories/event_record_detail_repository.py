@@ -16,7 +16,6 @@ from app.schemas.model_crud.activities import (
     EventRecordDetailCreate,
     EventRecordDetailUpdate,
 )
-from app.utils.duplicates import handle_duplicates
 from app.utils.exceptions import handle_exceptions
 
 
@@ -39,7 +38,6 @@ class EventRecordDetailRepository(
         return model(**creation_data)
 
     @handle_exceptions
-    @handle_duplicates
     def create(
         self,
         db_session: DbSession,
