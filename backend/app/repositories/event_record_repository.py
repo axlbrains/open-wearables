@@ -1,5 +1,5 @@
 import contextlib
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import UUID as SQL_UUID
@@ -116,6 +116,33 @@ class EventRecordRepository(
             .returning(self.model.id)
         )
         return db_session.execute(stmt).scalar_one_or_none()
+
+    def get_sleep_end_dates(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        source: str,
+        start_date: date,
+        end_date: date,
+    ) -> set[date]:
+        """Dates (by wake-up / end_datetime) that already have a sleep record for the source.
+
+        Providers that label a night by its wake-up date (Polar) use this to skip
+        re-fetching nights that were already ingested.
+        """
+        rows = (
+            db_session.query(func.date(self.model.end_datetime))
+            .join(DataSource, self.model.data_source_id == DataSource.id)
+            .filter(
+                DataSource.user_id == user_id,
+                DataSource.source == source,
+                self.model.category == "sleep",
+                self.model.end_datetime >= datetime.combine(start_date, datetime.min.time()),
+                self.model.end_datetime < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+            )
+            .all()
+        )
+        return {row[0] for row in rows}
 
     def get_by_external_id(
         self,

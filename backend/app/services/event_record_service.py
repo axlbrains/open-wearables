@@ -860,6 +860,17 @@ class EventRecordService(
         )
 
     @handle_exceptions
+    def get_sleep_end_dates(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        source: str,
+        start_date: date,
+        end_date: date,
+    ) -> set[date]:
+        """Wake-up dates that already have a stored sleep record for the source."""
+        return self.crud.get_sleep_end_dates(db_session, user_id, source, start_date, end_date)
+
     def get_sleep_sessions(
         self,
         db_session: DbSession,

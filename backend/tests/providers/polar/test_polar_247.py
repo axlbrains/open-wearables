@@ -387,3 +387,59 @@ class TestPolar247HypnogramParsing:
         start = datetime(2024, 1, 15, 23, 0, tzinfo=timezone.utc)
         end = datetime(2024, 1, 16, 7, 0, tzinfo=timezone.utc)
         assert data_247._parse_hypnogram({}, start, end) == []
+
+
+class TestPolarSleepLateAvailability:
+    """Nights entering /sleep/available after their date left the sync window must still be fetched."""
+
+    def _run(self, data_247: Polar247Data, available: set, stored: set) -> list:
+        from datetime import datetime, timezone
+        from unittest.mock import MagicMock, patch
+        from uuid import uuid4
+
+        fetched: list[str] = []
+
+        def fake_request(db, user_id, endpoint, **kwargs):
+            fetched.append(endpoint)
+            return {"date": endpoint.rsplit("/", 1)[-1]}
+
+        with (
+            patch.object(data_247, "_get_available_sleep_dates", return_value=available),
+            patch.object(data_247, "_make_api_request", side_effect=fake_request),
+            patch(
+                "app.services.providers.polar.data_247.event_record_service.get_sleep_end_dates",
+                return_value=stored,
+            ),
+        ):
+            data_247.get_sleep_data(
+                MagicMock(),
+                uuid4(),
+                start_time=datetime(2026, 9, 7, 2, 0, tzinfo=timezone.utc),
+                end_time=datetime(2026, 9, 7, 8, 0, tzinfo=timezone.utc),
+            )
+        return fetched
+
+    def test_late_synced_nights_are_fetched(self, data_247: Polar247Data) -> None:
+        from datetime import date
+
+        # Nights from a week ago appeared in /available only now (device synced late)
+        available = {date(2026, 8, 30), date(2026, 8, 31)}
+        fetched = self._run(data_247, available, stored=set())
+        assert "/v3/users/sleep/2026-08-30" in fetched
+        assert "/v3/users/sleep/2026-08-31" in fetched
+
+    def test_already_stored_nights_are_not_refetched(self, data_247: Polar247Data) -> None:
+        from datetime import date
+
+        available = {date(2026, 8, 30), date(2026, 8, 31)}
+        fetched = self._run(data_247, available, stored={date(2026, 8, 30)})
+        assert "/v3/users/sleep/2026-08-30" not in fetched
+        assert "/v3/users/sleep/2026-08-31" in fetched
+
+    def test_window_nights_fetched_even_when_stored(self, data_247: Polar247Data) -> None:
+        from datetime import date
+
+        # A night inside the live sync window is always re-fetched (merge keeps it idempotent)
+        available = {date(2026, 9, 7)}
+        fetched = self._run(data_247, available, stored={date(2026, 9, 7)})
+        assert "/v3/users/sleep/2026-09-07" in fetched

@@ -154,6 +154,9 @@ class Polar247Data(Base247DataTemplate):
         nights = (response or {}).get("available", [])
         return {date.fromisoformat(night["date"]) for night in nights if night.get("date")}
 
+    # Polar keeps nights available via AccessLink for 28 days.
+    SLEEP_AVAILABILITY_DAYS = 28
+
     def get_sleep_data(
         self,
         db: DbSession,
@@ -165,8 +168,22 @@ class Polar247Data(Base247DataTemplate):
             start_time.date() + timedelta(days=i) for i in range((end_time.date() - start_time.date()).days + 1)
         }
         available_dates = self._get_available_sleep_dates(db, user_id)
+
+        # Nights enter /sleep/available only after the user's device syncs with
+        # Polar Flow, which can happen DAYS after the night itself. A night whose
+        # date has already left the (hourly) sync window would then never be
+        # fetched. Pick up any available night from Polar's whole retention
+        # window that we haven't stored yet, on top of the regular window fetch.
+        retention_start = end_time.date() - timedelta(days=self.SLEEP_AVAILABILITY_DAYS - 1)
+        late_candidates = {d for d in available_dates if retention_start <= d <= end_time.date()} - date_range
+        if late_candidates:
+            stored_dates = event_record_service.get_sleep_end_dates(
+                db, user_id, self.provider_name, retention_start, end_time.date()
+            )
+            late_candidates -= stored_dates
+
         sleep_data = []
-        for d in date_range.intersection(available_dates):
+        for d in sorted(date_range.intersection(available_dates) | late_candidates):
             response = self._make_api_request(db, user_id, f"/v3/users/sleep/{d.isoformat()}")
             if response:
                 sleep_data.append(response)
