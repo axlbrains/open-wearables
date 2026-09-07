@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time as time_module
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Set
 from uuid import uuid4
@@ -95,26 +96,41 @@ class _Pipeline:
 class _Lock:
     """Best-effort lock implemented via SET-NX-EX semantics.
 
-    ``acquire(blocking=False)`` is the only mode we exercise — call sites
-    in OW always pass ``blocking_timeout=0`` (Apple sleep upload guard,
-    finalize_stale_sleeps loop).  Blocking acquisition would need a wait
-    loop; not implemented because nothing needs it today.
+    Supports non-blocking (``blocking_timeout=0``: Apple sleep upload guard,
+    finalize_stale_sleeps) and blocking acquisition with a poll interval
+    (``blocking_timeout=10, sleep=0.2``: the token-refresh guard in
+    api_client). On failure ``with lock:`` proceeds unlocked with a warning
+    instead of raising LockError — pre-existing shim semantics.
     """
 
-    def __init__(self, client: "KvStoreClient", key: str, timeout: int, blocking_timeout: int) -> None:
+    def __init__(
+        self, client: "KvStoreClient", key: str, timeout: int, blocking_timeout: float, sleep: float = 0.1
+    ) -> None:
         self._client = client
         self._key = f"lock:{key}"
         self._timeout = timeout
         self._blocking_timeout = blocking_timeout
+        self._sleep = sleep
         self._token = uuid4().hex
         self._acquired = False
 
-    def acquire(self, blocking: bool = True, blocking_timeout: int | None = None) -> bool:
-        if blocking and (blocking_timeout or self._blocking_timeout) > 0:
-            logger.debug("kv_store: blocking lock acquisition not implemented; falling back to single try")
-        ok = self._client.set(self._key, self._token, nx=True, ex=self._timeout)
-        self._acquired = bool(ok)
-        return self._acquired
+    def acquire(self, blocking: bool = True, blocking_timeout: float | None = None) -> bool:
+        """Try to take the lock; poll every ``sleep`` seconds up to ``blocking_timeout``.
+
+        Mirrors redis-py Lock.acquire closely enough for OW's call sites
+        (token-refresh guard passes blocking_timeout=10, sleep=0.2).
+        """
+        wait = blocking_timeout if blocking_timeout is not None else self._blocking_timeout
+        deadline = time_module.monotonic() + max(wait, 0) if blocking else time_module.monotonic()
+        while True:
+            ok = self._client.set(self._key, self._token, nx=True, ex=self._timeout)
+            if ok:
+                self._acquired = True
+                return True
+            if not blocking or time_module.monotonic() >= deadline:
+                self._acquired = False
+                return False
+            time_module.sleep(self._sleep)
 
     def release(self) -> None:
         if not self._acquired:
@@ -128,7 +144,12 @@ class _Lock:
         self._acquired = False
 
     def __enter__(self) -> "_Lock":
-        self.acquire(blocking=False)
+        if not self.acquire(blocking=self._blocking_timeout > 0):
+            # Best-effort semantics (pre-existing shim behaviour): proceed without
+            # the lock rather than raising LockError like redis-py would.
+            logger.warning(
+                "kv_store: lock %s not acquired within %ss; proceeding unlocked", self._key, self._blocking_timeout
+            )
         return self
 
     def __exit__(self, *_exc: Any) -> None:
@@ -494,8 +515,10 @@ class KvStoreClient:
     def pipeline(self, transaction: bool = True) -> _Pipeline:  # noqa: ARG002 - signature compat
         return _Pipeline(self)
 
-    def lock(self, key: str, timeout: int = 30, blocking_timeout: int = 0) -> _Lock:
-        return _Lock(self, key, timeout=timeout, blocking_timeout=blocking_timeout)
+    def lock(
+        self, key: str, timeout: int = 30, blocking_timeout: float = 0, sleep: float = 0.1, **_kwargs: Any
+    ) -> _Lock:
+        return _Lock(self, key, timeout=timeout, blocking_timeout=blocking_timeout, sleep=sleep)
 
     def publish(self, _channel: str, _message: str) -> int:
         # No-op.  See module docstring.
