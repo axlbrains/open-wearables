@@ -121,21 +121,22 @@ class EventRecordRepository(
         self,
         db_session: DbSession,
         user_id: UUID,
-        source: str,
+        provider: str,
         start_date: date,
         end_date: date,
     ) -> set[date]:
-        """Dates (by wake-up / end_datetime) that already have a sleep record for the source.
+        """Dates (by wake-up / end_datetime) that already have a sleep record for the provider.
 
         Providers that label a night by its wake-up date (Polar) use this to skip
-        re-fetching nights that were already ingested.
+        re-fetching nights that were already ingested. Filters by
+        ``DataSource.provider`` — ``source`` is empty for pull-ingested Polar rows.
         """
         rows = (
             db_session.query(func.date(self.model.end_datetime))
             .join(DataSource, self.model.data_source_id == DataSource.id)
             .filter(
                 DataSource.user_id == user_id,
-                DataSource.source == source,
+                DataSource.provider == provider,
                 self.model.category == "sleep",
                 self.model.end_datetime >= datetime.combine(start_date, datetime.min.time()),
                 self.model.end_datetime < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),

@@ -82,3 +82,19 @@ class TestOffloadEnabled:
 
         assert response.status_code == 503
         mock_task.assert_not_called()
+
+
+def test_idempotency_key_accepts_payload_ref() -> None:
+    """Regression: the task signature gained payload_ref (upstream S3 offload); the
+    fork's @idempotent key fn must accept every task kwarg or the wrapper TypeErrors."""
+    from app.integrations.celery.tasks.process_sdk_upload_task import _sdk_upload_idem_key
+
+    key = _sdk_upload_idem_key(
+        content=None,
+        content_type="application/json",
+        user_id="u",
+        provider="apple",
+        batch_id="b-1",
+        payload_ref="s3://bucket/x.json",
+    )
+    assert "b-1" in key

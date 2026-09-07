@@ -890,12 +890,14 @@ class Polar247Data(Base247DataTemplate):
             case PolarWebhookEventType.SLEEP:
                 count = 0
                 for record, detail, score, hr_samples in self.normalize_sleep([raw], user_id):
-                    event_record_service.create_or_merge_sleep(
+                    saved = event_record_service.create_or_merge_sleep(
                         db, user_id, record, detail, settings.sleep_end_gap_minutes
                     )
                     count += 1
                     if score:
-                        health_score_service.bulk_create(db, [score])
+                        # Point the score at the row that actually exists (merge may
+                        # have discarded the pre-generated id) — FK violation otherwise.
+                        health_score_service.bulk_create(db, [score.model_copy(update={"event_record_id": saved.id})])
                     if hr_samples:
                         timeseries_service.bulk_create_samples(db, hr_samples)
                 return {"sleep": count}
@@ -940,10 +942,15 @@ class Polar247Data(Base247DataTemplate):
 
         for record, detail, score, hr in normalized:
             try:
-                event_record_service.create_or_merge_sleep(db, user_id, record, detail, settings.sleep_end_gap_minutes)
+                saved = event_record_service.create_or_merge_sleep(
+                    db, user_id, record, detail, settings.sleep_end_gap_minutes
+                )
                 count += 1
                 if score:
-                    scores.append(score)
+                    # The session may have been MERGED into an existing record — point the
+                    # score at the row that actually exists, not the pre-generated id
+                    # (FK violation otherwise).
+                    scores.append(score.model_copy(update={"event_record_id": saved.id}))
                 hr_samples.extend(hr)
             except Exception as e:
                 log_and_capture_error(

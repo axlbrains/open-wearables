@@ -32,11 +32,12 @@ def _get_import_service(provider: str) -> SDKImportService:
 
 
 def _sdk_upload_idem_key(
-    content: str,  # noqa: ARG001
+    content: str | None,  # noqa: ARG001
     content_type: str,  # noqa: ARG001
     user_id: str,  # noqa: ARG001
     provider: str,  # noqa: ARG001
     batch_id: str | None = None,
+    payload_ref: str | None = None,  # noqa: ARG001
 ) -> str:
     if not batch_id:
         # No stable key — let the dedup decorator fall through and run the task.
