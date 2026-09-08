@@ -75,6 +75,18 @@ class Polar247Data(Base247DataTemplate):
         super().__init__(provider_name, api_base_url, oauth)
         self.connection_repo = UserConnectionRepository()
 
+    # Endpoints we actually depend on: a 401 here is a real problem and must stay an
+    # ERROR. Everything else in the Polar catalogue is a premium/per-device feature
+    # (Elixir, SleepWise) that legitimately 401s for users who don't have it.
+    CORE_ENDPOINT_PREFIXES = ("/v3/users/sleep", "/v3/users/activities", "/v3/exercises")
+
+    @classmethod
+    def _is_core_endpoint(cls, endpoint: str) -> bool:
+        # sleepwise/* is premium despite sharing the "sleep" prefix
+        if endpoint.startswith("/v3/users/sleepwise"):
+            return False
+        return endpoint.startswith(cls.CORE_ENDPOINT_PREFIXES)
+
     def _make_api_request(
         self,
         db: DbSession,
@@ -110,6 +122,22 @@ class Polar247Data(Base247DataTemplate):
                 return None
             # 204 No Content: api_client raises 500 wrapping a JSONDecodeError on empty body
             if e.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR and "Expecting value" in str(e.detail):
+                return None
+            # 401 on an OPTIONAL endpoint = the user's device/consent doesn't cover that
+            # Polar feature (Elixir & SleepWise are per-device and separately consented);
+            # the same token keeps working for every other endpoint in the same run, so
+            # this is "no data", not an auth failure. A dead token fails earlier, during
+            # refresh, which revokes the connection. Core endpoints stay loud on 401.
+            if e.status_code == status.HTTP_401_UNAUTHORIZED and not self._is_core_endpoint(endpoint):
+                log_structured(
+                    self.logger,
+                    "warning",
+                    f"Polar feature not permitted for this user ({endpoint}); skipping",
+                    provider="polar",
+                    action="polar_endpoint_not_permitted",
+                    endpoint=endpoint,
+                    user_id=str(user_id),
+                )
                 return None
             raise
 

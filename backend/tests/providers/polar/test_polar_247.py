@@ -443,3 +443,34 @@ class TestPolarSleepLateAvailability:
         available = {date(2026, 9, 7)}
         fetched = self._run(data_247, available, stored={date(2026, 9, 7)})
         assert "/v3/users/sleep/2026-09-07" in fetched
+
+
+class TestPolar401Handling:
+    """A 401 on a premium/per-device endpoint means 'this user doesn't have that
+    feature', not 'the token is dead' — the same token keeps working elsewhere in
+    the same run. Regression for the wrist-ecg ERROR noise seen in prod 2026-09-08.
+    """
+
+    def _call(self, data_247: Polar247Data, endpoint: str) -> object:
+        from unittest.mock import MagicMock, patch
+        from uuid import uuid4
+
+        from fastapi import HTTPException
+
+        with patch(
+            "app.services.providers.polar.data_247.make_authenticated_request",
+            side_effect=HTTPException(status_code=401, detail="Polar authorization expired."),
+        ):
+            return data_247._make_api_request(MagicMock(), uuid4(), endpoint)
+
+    def test_premium_endpoint_401_is_skipped(self, data_247: Polar247Data) -> None:
+        for endpoint in ("/v3/users/wrist-ecg", "/v3/users/spo2", "/v3/users/sleepwise/alertness"):
+            assert self._call(data_247, endpoint) is None
+
+    def test_core_endpoint_401_still_raises(self, data_247: Polar247Data) -> None:
+        from fastapi import HTTPException
+
+        for endpoint in ("/v3/users/sleep/2026-09-07", "/v3/users/activities"):
+            with pytest.raises(HTTPException) as exc:
+                self._call(data_247, endpoint)
+            assert exc.value.status_code == 401

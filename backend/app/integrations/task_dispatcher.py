@@ -232,30 +232,34 @@ def dispatch_task(
     raise ValueError(f"Unsupported task dispatch backend: {settings.task_dispatch_backend}")
 
 
+# Standard task -> (payload kwarg to offload, reference-aware task, content type, prefix).
+# Every OTHER kwarg is forwarded to the reference task verbatim, so a reference task's
+# signature must stay a superset of its base task's — enforced by
+# tests/integrations/test_task_dispatcher.py::TestReferenceTaskSignatureParity.
+_OFFLOAD_MAP: dict[RegisteredTask, tuple[str, RegisteredTask, str, str]] = {
+    RegisteredTask.PROCESS_XML_UPLOAD: (
+        "file_contents",
+        RegisteredTask.PROCESS_XML_UPLOAD_REFERENCE,
+        "application/xml",
+        "apple-xml",
+    ),
+    RegisteredTask.PROCESS_SDK_UPLOAD: (
+        "content",
+        RegisteredTask.PROCESS_SDK_UPLOAD_REFERENCE,
+        "application/json",
+        "sdk-sync",
+    ),
+}
+
+
 def _maybe_offload_payload(task_key: RegisteredTask, kwargs: dict[str, Any]) -> tuple[RegisteredTask, dict[str, Any]]:
     """Automatically offload large payloads to storage and switch to reference tasks."""
     from app.services.task_payload_storage import store_task_payload
 
-    # Map of standard tasks to their reference-aware counterparts and the key to offload
-    offload_map = {
-        RegisteredTask.PROCESS_XML_UPLOAD: (
-            "file_contents",
-            RegisteredTask.PROCESS_XML_UPLOAD_REFERENCE,
-            "application/xml",
-            "apple-xml",
-        ),
-        RegisteredTask.PROCESS_SDK_UPLOAD: (
-            "content",
-            RegisteredTask.PROCESS_SDK_UPLOAD_REFERENCE,
-            "application/json",
-            "sdk-sync",
-        ),
-    }
-
-    if task_key not in offload_map:
+    if task_key not in _OFFLOAD_MAP:
         return task_key, kwargs
 
-    payload_key, ref_task_key, content_type, prefix = offload_map[task_key]
+    payload_key, ref_task_key, content_type, prefix = _OFFLOAD_MAP[task_key]
     payload = kwargs.get(payload_key)
 
     if not payload:

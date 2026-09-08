@@ -1,4 +1,5 @@
 import base64
+import importlib
 import json
 from unittest.mock import MagicMock
 
@@ -107,3 +108,38 @@ def test_dispatch_task_uses_cloud_tasks_http_api(monkeypatch: pytest.MonkeyPatch
     decoded = json.loads(raw_body)
     assert decoded["kwargs"]["filename"] == "payload.xml"
     assert decoded["kwargs"]["file_contents"]["__open_wearables_bytes__"] == base64.b64encode(b"<xml/>").decode("ascii")
+
+
+class TestReferenceTaskSignatureParity:
+    """The dispatcher swaps a large-payload task for its ``*_reference`` variant and
+    forwards every other kwarg unchanged. So each reference task must accept every
+    kwarg its base task accepts, minus the offloaded one.
+
+    Regression for the 2026-09-08 prod incident: upstream added ``payload_ref`` to
+    process_sdk_upload, the reference sibling was not updated, and every SDK batch
+    over task_payload_inline_max_bytes died with TypeError and was dropped after
+    Cloud Tasks exhausted its retries.
+    """
+
+    def test_reference_tasks_accept_base_task_kwargs(self) -> None:
+        import inspect
+
+        from app.integrations.task_dispatcher import _OFFLOAD_MAP, TASK_DEFINITIONS
+
+        def _params(task_key: object) -> tuple[set[str], str]:
+            definition = TASK_DEFINITIONS[task_key]  # ty:ignore[invalid-argument-type]
+            module_path, _, attr = definition.callable_path.rpartition(".")
+            module = importlib.import_module(module_path)
+            fn = getattr(module, attr)
+            fn = getattr(fn, "__wrapped__", fn)  # unwrap @idempotent / celery task
+            return set(inspect.signature(fn).parameters), definition.callable_path
+
+        for base_key, (payload_key, ref_key, *_rest) in _OFFLOAD_MAP.items():
+            base_params, base_path = _params(base_key)
+            ref_params, ref_path = _params(ref_key)
+            forwarded = base_params - {payload_key}
+            missing = forwarded - ref_params
+            assert not missing, (
+                f"{ref_path} cannot accept kwargs forwarded from {base_path}: {sorted(missing)}. "
+                "The dispatcher passes them through verbatim, so this is a runtime TypeError."
+            )
