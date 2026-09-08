@@ -78,10 +78,16 @@ class Polar247Data(Base247DataTemplate):
     # Endpoints we actually depend on: a 401 here is a real problem and must stay an
     # ERROR. Everything else in the Polar catalogue is a premium/per-device feature
     # (Elixir, SleepWise) that legitimately 401s for users who don't have it.
-    # Trailing slashes matter: "/v3/users/sleep/" covers sleep/available and
-    # sleep/{date}, while leaving the premium Elixir siblings that merely start with
-    # the same letters — sleep-skin-temperature, sleepwise/* — out of the core set.
-    CORE_ENDPOINT_PREFIXES = ("/v3/users/sleep/", "/v3/users/activities", "/v3/exercises")
+    # The line is the product dependency, not Polar's catalogue: sleep sessions and
+    # workouts are what we require, so a 401 there is a real fault and must stay an
+    # ERROR. Everything else Polar offers — daily activity summaries, Elixir
+    # (SpO2, temperatures, wrist ECG), SleepWise — is optional enrichment that Polar
+    # gates per user, device and consent; observed in prod 401ing for one athlete
+    # while another gets data on the same endpoint with a healthy token. A genuinely
+    # dead token still screams, because it 401s on sleep and exercises too.
+    # Trailing slash matters: "/v3/users/sleep/" covers sleep/available and
+    # sleep/{date} without also matching sleep-skin-temperature.
+    CORE_ENDPOINT_PREFIXES = ("/v3/users/sleep/", "/v3/exercises")
 
     @classmethod
     def _is_core_endpoint(cls, endpoint: str) -> bool:

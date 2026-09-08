@@ -471,6 +471,8 @@ class TestPolar401Handling:
             # these two only *look* like the core sleep endpoint
             "/v3/users/sleep-skin-temperature",
             "/v3/users/body-temperature",
+            # daily activity is consent-gated per user as well
+            "/v3/users/activities",
         )
         for endpoint in premium:
             assert self._call(data_247, endpoint) is None
@@ -478,7 +480,7 @@ class TestPolar401Handling:
     def test_core_endpoint_401_still_raises(self, data_247: Polar247Data) -> None:
         from fastapi import HTTPException
 
-        for endpoint in ("/v3/users/sleep/2026-09-07", "/v3/users/activities"):
+        for endpoint in ("/v3/users/sleep/2026-09-07", "/v3/users/sleep/available", "/v3/exercises"):
             with pytest.raises(HTTPException) as exc:
                 self._call(data_247, endpoint)
             assert exc.value.status_code == 401
