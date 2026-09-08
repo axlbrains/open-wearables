@@ -464,7 +464,15 @@ class TestPolar401Handling:
             return data_247._make_api_request(MagicMock(), uuid4(), endpoint)
 
     def test_premium_endpoint_401_is_skipped(self, data_247: Polar247Data) -> None:
-        for endpoint in ("/v3/users/wrist-ecg", "/v3/users/spo2", "/v3/users/sleepwise/alertness"):
+        premium = (
+            "/v3/users/wrist-ecg",
+            "/v3/users/spo2",
+            "/v3/users/sleepwise/alertness",
+            # these two only *look* like the core sleep endpoint
+            "/v3/users/sleep-skin-temperature",
+            "/v3/users/body-temperature",
+        )
+        for endpoint in premium:
             assert self._call(data_247, endpoint) is None
 
     def test_core_endpoint_401_still_raises(self, data_247: Polar247Data) -> None:

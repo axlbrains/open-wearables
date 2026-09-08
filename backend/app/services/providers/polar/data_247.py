@@ -78,13 +78,13 @@ class Polar247Data(Base247DataTemplate):
     # Endpoints we actually depend on: a 401 here is a real problem and must stay an
     # ERROR. Everything else in the Polar catalogue is a premium/per-device feature
     # (Elixir, SleepWise) that legitimately 401s for users who don't have it.
-    CORE_ENDPOINT_PREFIXES = ("/v3/users/sleep", "/v3/users/activities", "/v3/exercises")
+    # Trailing slashes matter: "/v3/users/sleep/" covers sleep/available and
+    # sleep/{date}, while leaving the premium Elixir siblings that merely start with
+    # the same letters — sleep-skin-temperature, sleepwise/* — out of the core set.
+    CORE_ENDPOINT_PREFIXES = ("/v3/users/sleep/", "/v3/users/activities", "/v3/exercises")
 
     @classmethod
     def _is_core_endpoint(cls, endpoint: str) -> bool:
-        # sleepwise/* is premium despite sharing the "sleep" prefix
-        if endpoint.startswith("/v3/users/sleepwise"):
-            return False
         return endpoint.startswith(cls.CORE_ENDPOINT_PREFIXES)
 
     def _make_api_request(
