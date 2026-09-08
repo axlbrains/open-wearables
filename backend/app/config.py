@@ -126,6 +126,13 @@ class Settings(BaseSettings):
     # picked up. Disabled by default. Set via a compact duration string: "2d", "20h",
     # "90m", "1d12h". Capped per provider by max_historical_days.
     pull_sync_lookback: timedelta | None = None
+    # One person, one live connection: when a provider account is connected to a new OW
+    # profile, revoke the same account's connections on every other profile. Upstream
+    # instead supports sharing one provider account across profiles and fans the synced
+    # data out to all of them (see sync_vendor_data_task); set this to false to keep
+    # that behaviour. Providers typically invalidate the previous token on
+    # re-authorisation anyway, which leaves the older profile 401ing forever.
+    single_active_connection_per_provider_account: bool = True
     # Grace-period flag: auto-dispatch historical sync after OAuth connect (default: true).
     # Pre-0.4.2 behaviour. Set to false once your integration calls /sync/historical explicitly.
     # Will default to false in a future release.

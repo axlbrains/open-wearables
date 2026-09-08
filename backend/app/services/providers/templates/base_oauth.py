@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from redis import Redis
 from starlette.status import HTTP_400_BAD_REQUEST, HTTP_401_UNAUTHORIZED, HTTP_500_INTERNAL_SERVER_ERROR
 
+from app.config import settings
 from app.database import DbSession
 from app.integrations.redis_client import get_redis_client
 from app.repositories.user_connection_repository import UserConnectionRepository
@@ -368,6 +369,33 @@ class BaseOAuthTemplate(ABC):
         """Extracts provider user info. Default implementation returns None."""
         return {"user_id": None, "username": None}
 
+    def _revoke_superseded_connections(self, db: DbSession, user_id: UUID, provider_user_id: str | None) -> None:
+        """One person, one live connection — see settings.single_active_connection_per_provider_account.
+
+        The provider has just issued a token for this account, which typically
+        invalidates the one any other OW profile still holds; leaving those active
+        means an hourly 401 that nothing ever clears.
+        """
+        if not settings.single_active_connection_per_provider_account:
+            return
+        superseded = self.connection_repo.revoke_other_active_for_provider_account(
+            db, self.provider_name, provider_user_id, user_id
+        )
+        for connection in superseded:
+            logger.info(
+                "Revoked connection %s for user %s: %s account reconnected on another profile",
+                connection.id,
+                connection.user_id,
+                self.provider_name,
+            )
+            on_connection_revoked(
+                user_id=connection.user_id,
+                provider=self.provider_name,
+                connection_id=connection.id,
+                reason="superseded_by_new_connection",
+                revoked_at=connection.updated_at.isoformat(),
+            )
+
     def _save_connection(
         self,
         db: DbSession,
@@ -428,3 +456,5 @@ class BaseOAuthTemplate(ABC):
                 connection_id=new_connection.id,  # ty:ignore[unresolved-attribute]
                 connected_at=new_connection.created_at.isoformat(),  # ty:ignore[unresolved-attribute]
             )
+
+        self._revoke_superseded_connections(db, user_id, provider_user_id)

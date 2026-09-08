@@ -6,12 +6,13 @@ from uuid import UUID
 import httpx
 from pydantic import ValidationError
 
+from app.config import settings
 from app.database import DbSession
 from app.models import UserConnection
 from app.schemas.auth import ConnectionStatus
 from app.schemas.model_crud.user_management import UserConnectionCreate
 from app.schemas.providers.hevy import HevyUserInfo
-from app.services.outgoing_webhooks.events import on_connection_created
+from app.services.outgoing_webhooks.events import on_connection_created, on_connection_revoked
 from app.services.providers.base_strategy import (
     BaseProviderStrategy,
     InvalidApiKeyError,
@@ -115,6 +116,7 @@ class HevyStrategy(BaseProviderStrategy):
                     connection_id=existing.id,
                     connected_at=datetime.now(timezone.utc).isoformat(),
                 )
+            self._revoke_superseded_connections(db, user_id, existing.provider_user_id)
             return existing
 
         connection = self.connection_repo.create(
@@ -135,4 +137,24 @@ class HevyStrategy(BaseProviderStrategy):
             connection_id=connection.id,
             connected_at=connection.created_at.isoformat(),
         )
+        self._revoke_superseded_connections(db, user_id, connection.provider_user_id)
         return connection
+
+    def _revoke_superseded_connections(self, db: DbSession, user_id: UUID, provider_user_id: str | None) -> None:
+        """One person, one live connection — mirrors BaseOAuthTemplate for the API-key flow.
+
+        Reposting someone else's key onto a new profile means the old profile is now
+        syncing an account it no longer owns.
+        """
+        if not settings.single_active_connection_per_provider_account:
+            return
+        for stale in self.connection_repo.revoke_other_active_for_provider_account(
+            db, self.name, provider_user_id, user_id
+        ):
+            on_connection_revoked(
+                user_id=stale.user_id,
+                provider=self.name,
+                connection_id=stale.id,
+                reason="superseded_by_new_connection",
+                revoked_at=stale.updated_at.isoformat(),
+            )

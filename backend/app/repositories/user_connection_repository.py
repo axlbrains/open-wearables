@@ -292,6 +292,42 @@ class UserConnectionRepository(CrudRepository[UserConnection, UserConnectionCrea
         db_session.commit()
         return result.rowcount
 
+    def revoke_other_active_for_provider_account(
+        self,
+        db_session: DbSession,
+        provider: str,
+        provider_user_id: str | None,
+        keep_user_id: UUID,
+    ) -> list[UserConnection]:
+        """Revoke every OTHER active connection for the same external provider account.
+
+        One person, one live connection: re-authorising a provider account leaves the
+        previous OW profile holding a token the provider has already invalidated
+        (observed on Polar — the stale row 401'd hourly while the new one worked).
+        Returns the rows that were revoked so the caller can emit the webhooks.
+        """
+        if not provider_user_id:
+            return []
+        stale = (
+            db_session.query(self.model)
+            .filter(
+                self.model.provider == provider,
+                self.model.provider_user_id == provider_user_id,
+                self.model.user_id != keep_user_id,
+                self.model.status == ConnectionStatus.ACTIVE,
+            )
+            .all()
+        )
+        if not stale:
+            return []
+        now = datetime.now(timezone.utc)
+        for connection in stale:
+            connection.status = ConnectionStatus.REVOKED
+            connection.updated_at = now
+            db_session.add(connection)
+        db_session.commit()
+        return stale
+
     def mark_as_revoked(self, db_session: DbSession, connection: UserConnection) -> UserConnection:
         """Mark connection as revoked (when refresh token fails)."""
         connection.status = ConnectionStatus.REVOKED

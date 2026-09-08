@@ -109,3 +109,56 @@ class TestHevyApiKeyConnect:
         user = UserFactory()
         response = client.post(f"/api/v1/users/{user.id}/connections/hevy", json={"api_key": HEVY_KEY})
         assert response.status_code in (401, 403)
+
+
+class TestSingleActiveConnectionPerAccount:
+    """One person, one live connection: connecting a provider account to a new
+    profile revokes it everywhere else. Regression for the prod state where two OW
+    profiles held the same Polar athlete and the older token 401'd hourly forever.
+    """
+
+    def test_connecting_same_account_elsewhere_revokes_the_old_one(
+        self, client: TestClient, db: Session
+    ) -> None:
+        first = UserFactory()
+        second = UserFactory()
+        headers = api_key_headers(ApiKeyFactory().id)
+
+        with patch("app.services.providers.hevy.strategy.httpx.get", return_value=_mock_user_info_response()):
+            client.post(f"/api/v1/users/{first.id}/connections/hevy", json={"api_key": HEVY_KEY}, headers=headers)
+            client.post(f"/api/v1/users/{second.id}/connections/hevy", json={"api_key": HEVY_KEY}, headers=headers)
+
+        old = (
+            db.query(UserConnection)
+            .filter(UserConnection.user_id == first.id, UserConnection.provider == "hevy")
+            .one()
+        )
+        new = (
+            db.query(UserConnection)
+            .filter(UserConnection.user_id == second.id, UserConnection.provider == "hevy")
+            .one()
+        )
+        # same external account (mocked /v1/user/info returns one id)
+        assert old.provider_user_id == new.provider_user_id
+        assert old.status == ConnectionStatus.REVOKED
+        assert new.status == ConnectionStatus.ACTIVE
+
+    def test_other_users_other_accounts_are_untouched(self, client: TestClient, db: Session) -> None:
+        first = UserFactory()
+        second = UserFactory()
+        headers = api_key_headers(ApiKeyFactory().id)
+
+        other_account = _mock_user_info_response()
+        other_account.json.return_value = {"id": "hevy-user-2", "name": "Jane"}
+
+        with patch("app.services.providers.hevy.strategy.httpx.get", return_value=_mock_user_info_response()):
+            client.post(f"/api/v1/users/{first.id}/connections/hevy", json={"api_key": HEVY_KEY}, headers=headers)
+        with patch("app.services.providers.hevy.strategy.httpx.get", return_value=other_account):
+            client.post(f"/api/v1/users/{second.id}/connections/hevy", json={"api_key": "other"}, headers=headers)
+
+        untouched = (
+            db.query(UserConnection)
+            .filter(UserConnection.user_id == first.id, UserConnection.provider == "hevy")
+            .one()
+        )
+        assert untouched.status == ConnectionStatus.ACTIVE
