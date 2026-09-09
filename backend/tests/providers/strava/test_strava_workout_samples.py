@@ -414,3 +414,58 @@ class TestIngestionWiring:
 
         mock_ts.bulk_create_samples.assert_not_called()
         assert count == 0
+
+
+class TestManualActivityWithoutStreams:
+    """Strava answers /streams with 404 for manual entries — they have no streams.
+
+    Regression for the prod noise seen 2026-09-08: a manual gym entry produced a
+    traceback plus a Sentry event on every hourly pull, because the 6h lookback
+    re-covered it and the skip-if-samples-exist guard can never be satisfied.
+    """
+
+    def _ingest(self, sw: StravaWorkouts, exc: Exception) -> object:
+        record, _ = sw._normalize_workout(_SAMPLE_ACTIVITY, uuid4())
+        with (
+            patch.object(sw, "_build_workout_samples", side_effect=exc),
+            patch(
+                "app.services.providers.strava.workouts.timeseries_service.has_samples_in_range",
+                return_value=False,
+            ),
+            patch("app.services.providers.strava.workouts.settings") as mock_settings,
+            patch("app.services.providers.strava.workouts.log_and_capture_error") as mock_report,
+        ):
+            mock_settings.ingest_workout_samples = True
+            result = sw._ingest_workout_streams(MagicMock(), _SAMPLE_ACTIVITY, uuid4(), record)
+        return result, mock_report
+
+    def test_404_is_not_reported_as_an_error(self, strava_workouts: StravaWorkouts) -> None:
+        from fastapi import HTTPException
+
+        result, mock_report = self._ingest(strava_workouts, HTTPException(status_code=404, detail="Record Not Found"))
+        # None, not 0: the activity will never have streams, so callers must not retry
+        assert result is None
+        mock_report.assert_not_called()
+
+    def test_other_http_errors_are_still_reported(self, strava_workouts: StravaWorkouts) -> None:
+        from fastapi import HTTPException
+
+        result, mock_report = self._ingest(strava_workouts, HTTPException(status_code=500, detail="boom"))
+        assert result == 0
+        mock_report.assert_called_once()
+
+    def test_manual_activity_schedules_no_stream_retry(self, strava_workouts: StravaWorkouts) -> None:
+        with (
+            patch("app.services.providers.strava.workouts.event_record_service") as mock_service,
+            patch.object(strava_workouts, "_ingest_workout_streams", return_value=None),
+            patch(
+                "app.services.providers.strava.workouts.timeseries_service.has_samples_in_range",
+                return_value=False,
+            ),
+            patch("app.integrations.celery.tasks.strava_stream_retry_task.schedule_stream_retry") as mock_schedule,
+            patch("app.services.providers.strava.workouts.settings") as mock_settings,
+        ):
+            mock_settings.ingest_workout_samples = True
+            mock_service.create.return_value = MagicMock(id=uuid4())
+            strava_workouts.process_push_activity(db=MagicMock(), activity=_SAMPLE_ACTIVITY, user_id=uuid4())
+        mock_schedule.assert_not_called()

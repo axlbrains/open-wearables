@@ -3,6 +3,8 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+from fastapi import HTTPException, status
+
 from app.config import settings
 from app.constants.workout_types import get_unified_strava_workout_type
 from app.database import DbSession
@@ -306,8 +308,14 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         activity: StravaActivityJSON,
         user_id: UUID,
         record: EventRecordCreate,
-    ) -> int:
-        """Fetch + persist per-sample streams on workout arrival, flag-gated and failure-isolated."""
+    ) -> int | None:
+        """Fetch + persist per-sample streams on workout arrival, flag-gated and failure-isolated.
+
+        Returns the number of samples written, or ``None`` when the activity has no
+        streams at all — a manual entry, which Strava answers with 404. That is a
+        permanent property of the activity, so callers must not schedule a retry for
+        it, unlike ``0`` (streams exist but weren't ready yet).
+        """
         if not settings.ingest_workout_samples:
             return 0
         # Workouts are re-upserted whenever a sync window re-covers them (webhook
@@ -332,6 +340,28 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                 record.zone_offset,
                 activity.device_name or "",
             )
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                # Manual activities carry no streams; Strava answers /streams with 404.
+                # Not an error, and never worth retrying — the hourly lookback would
+                # otherwise re-raise this on every pass, forever.
+                log_structured(
+                    self.logger,
+                    "info",
+                    "Strava activity has no streams (manual entry); skipping samples",
+                    provider="strava",
+                    action="strava_streams_absent",
+                    activity_id=str(activity.id),
+                    user_id=str(user_id),
+                )
+                return None
+            log_and_capture_error(
+                exc,
+                self.logger,
+                "Failed to fetch Strava workout streams, skipping samples",
+                extra={"activity_id": activity.id},
+            )
+            return 0
         except Exception as exc:
             log_and_capture_error(
                 exc,
@@ -458,6 +488,8 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         # empty and, because the webhook bumps last_synced_at past the
         # activity's start, the periodic pull never re-covers the workout.
         # Schedule a delayed retry so the samples land once Strava is done.
+        # `None` means the activity has no streams at all (manual entry) — nothing
+        # to wait for, so it deliberately fails this check.
         if (
             ingested == 0
             and settings.ingest_workout_samples

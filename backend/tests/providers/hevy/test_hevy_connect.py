@@ -117,9 +117,7 @@ class TestSingleActiveConnectionPerAccount:
     profiles held the same Polar athlete and the older token 401'd hourly forever.
     """
 
-    def test_connecting_same_account_elsewhere_revokes_the_old_one(
-        self, client: TestClient, db: Session
-    ) -> None:
+    def test_connecting_same_account_elsewhere_revokes_the_old_one(self, client: TestClient, db: Session) -> None:
         first = UserFactory()
         second = UserFactory()
         headers = api_key_headers(ApiKeyFactory().id)
@@ -129,9 +127,7 @@ class TestSingleActiveConnectionPerAccount:
             client.post(f"/api/v1/users/{second.id}/connections/hevy", json={"api_key": HEVY_KEY}, headers=headers)
 
         old = (
-            db.query(UserConnection)
-            .filter(UserConnection.user_id == first.id, UserConnection.provider == "hevy")
-            .one()
+            db.query(UserConnection).filter(UserConnection.user_id == first.id, UserConnection.provider == "hevy").one()
         )
         new = (
             db.query(UserConnection)
@@ -157,8 +153,6 @@ class TestSingleActiveConnectionPerAccount:
             client.post(f"/api/v1/users/{second.id}/connections/hevy", json={"api_key": "other"}, headers=headers)
 
         untouched = (
-            db.query(UserConnection)
-            .filter(UserConnection.user_id == first.id, UserConnection.provider == "hevy")
-            .one()
+            db.query(UserConnection).filter(UserConnection.user_id == first.id, UserConnection.provider == "hevy").one()
         )
         assert untouched.status == ConnectionStatus.ACTIVE
