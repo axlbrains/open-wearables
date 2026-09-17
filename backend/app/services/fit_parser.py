@@ -73,6 +73,9 @@ class FitParseResult:
     developer_fields_found: list[str] = field(default_factory=list)
     hr_zones: HRZones | None = None
     power_zones: PowerZones | None = None
+    # Whole-workout rollup from the FIT ``session`` message, keyed by
+    # EventRecordMetrics field name so it can be merged straight into a detail.
+    session: dict[str, Any] = field(default_factory=dict)
 
 
 def parse_fit_file(
@@ -120,6 +123,12 @@ def parse_fit_file(
                 if ref == "session":
                     result.hr_zones = _parse_hr_zones(frame)
                     result.power_zones = _parse_power_zones(frame)
+
+            elif frame.name == "session" and not result.session:
+                # Multisport files carry one session per leg; the first is the one
+                # the workout record itself was built from, so later legs are skipped
+                # rather than silently overwriting it.
+                result.session = _extract_session_summary(frame)
 
             elif frame.name in _SEGMENT_KINDS:
                 numeric, enums = _SEGMENT_KINDS[frame.name]
@@ -183,6 +192,45 @@ _LENGTH_ENUMS: tuple[tuple[str, str], ...] = (
     ("swim_stroke", "swim_stroke"),
     ("length_type", "length_type"),
 )
+
+# Whole-workout rollup from the FIT ``session`` message.
+#   (fit_field_names..., metrics_key, scale, as_int)
+# The first FIT field present wins, so enhanced_* (FIT 2.0 float) is preferred
+# over its uint16 base equivalent — same precedence rule as _RECORD_FIELD_MAP.
+_SESSION_NUMERIC: tuple[tuple[tuple[str, ...], str, float, bool], ...] = (
+    (("total_distance",), "distance", 1.0, False),
+    (("total_calories",), "energy_burned", 1.0, False),
+    (("total_timer_time",), "moving_time_seconds", 1.0, True),
+    (("avg_heart_rate",), "heart_rate_avg", 1.0, False),
+    (("max_heart_rate",), "heart_rate_max", 1.0, True),
+    (("enhanced_avg_speed", "avg_speed"), "average_speed", 1.0, False),
+    (("enhanced_max_speed", "max_speed"), "max_speed", 1.0, False),
+    (("avg_cadence",), "average_cadence", 1.0, False),
+    (("avg_power",), "average_watts", 1.0, False),
+    (("max_power",), "max_watts", 1.0, False),
+    (("total_ascent",), "total_elevation_gain", 1.0, False),
+    (("enhanced_max_altitude", "max_altitude"), "elev_high", 1.0, False),
+    (("enhanced_min_altitude", "min_altitude"), "elev_low", 1.0, False),
+    (("total_steps",), "steps_count", 1.0, True),
+)
+
+
+def _extract_session_summary(frame: fitdecode.FitDataMessage) -> dict[str, Any]:
+    """Whole-workout totals from a FIT ``session`` message, keyed for EventRecordMetrics."""
+    summary: dict[str, Any] = {}
+    for fit_names, key, scale, as_int in _SESSION_NUMERIC:
+        for fit_name in fit_names:
+            value = _field_val(frame, fit_name)
+            if value is None:
+                continue
+            try:
+                scaled = float(value) * scale
+            except (TypeError, ValueError):
+                break
+            summary[key] = int(scaled) if as_int else Decimal(str(round(scaled, 6)))
+            break
+    return summary
+
 
 # Dispatch map: frame.name → (numeric_fields, enum_fields)
 _SEGMENT_KINDS: dict[str, tuple] = {

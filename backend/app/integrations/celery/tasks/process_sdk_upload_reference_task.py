@@ -14,6 +14,8 @@ def process_sdk_upload_reference(
     provider: str,
     batch_id: str | None = None,
     payload_ref: str | None = None,
+    sync_session_id: str | None = None,
+    sync_type: str | None = None,
 ) -> dict[str, int | str]:
     """Load an offloaded SDK payload from task-payload storage and process it.
 
@@ -35,6 +37,8 @@ def process_sdk_upload_reference(
             provider=provider,
             batch_id=batch_id,
             payload_ref=payload_ref,
+            sync_session_id=sync_session_id,
+            sync_type=sync_type,
         )
     finally:
         delete_task_payload(reference)

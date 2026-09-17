@@ -97,10 +97,46 @@ _LAP_FIELDS: list[_Field] = [
 ]
 
 
+# Session message (global_mesg_num=18) fields used here — the whole-workout rollup:
+#   253  timestamp          uint32  (FIT epoch seconds — end of session)
+#     7  total_elapsed_time uint32  (raw = seconds * 1000)
+#     8  total_timer_time   uint32  (raw = seconds * 1000)
+#     9  total_distance     uint32  (raw = meters * 100)
+#    11  total_calories     uint16  (kcal)
+#    14  avg_speed          uint16  (raw = m/s * 1000)
+#    15  max_speed          uint16  (raw = m/s * 1000)
+#    16  avg_heart_rate     uint8   (bpm)
+#    17  max_heart_rate     uint8   (bpm)
+#    18  avg_cadence        uint8   (rpm)
+#    20  avg_power          uint16  (W)
+#    21  max_power          uint16  (W)
+#    22  total_ascent       uint16  (m)
+#    50  max_altitude       uint16  (raw = (m + 500) * 5)
+#    71  min_altitude       uint16  (raw = (m + 500) * 5)
+
+_SESSION_FIELDS: list[_Field] = [
+    _Field(253, _UINT32, 4),
+    _Field(7, _UINT32, 4),
+    _Field(8, _UINT32, 4),
+    _Field(9, _UINT32, 4),
+    _Field(11, _UINT16, 2),
+    _Field(14, _UINT16, 2),
+    _Field(15, _UINT16, 2),
+    _Field(16, _UINT8, 1),
+    _Field(17, _UINT8, 1),
+    _Field(18, _UINT8, 1),
+    _Field(20, _UINT16, 2),
+    _Field(21, _UINT16, 2),
+    _Field(22, _UINT16, 2),
+    _Field(50, _UINT16, 2),
+    _Field(71, _UINT16, 2),
+]
+
+
 def _definition_msg(fields: list[_Field], local_type: int = 0, global_num: int = 20) -> bytes:
     """Build a FIT definition message.
 
-    local_type 0 = record (global 20), local_type 1 = lap (global 19).
+    local_type 0 = record (global 20), 1 = lap (global 19), 2 = session (global 18).
     """
     header = 0x40 | local_type
     body = struct.pack("<BBHB", 0x00, 0x00, global_num, len(fields))
@@ -136,6 +172,31 @@ def _lap_messages(laps: list[tuple[int, int, int, int, int, int]]) -> bytes:
             local_type=1,
         )
     return out
+
+
+def _session_message(end_ts: int, elapsed_s: int, distance_m: int) -> bytes:
+    """Whole-workout rollup (local_type=2, global=18) with the values the parser maps."""
+    return _definition_msg(_SESSION_FIELDS, local_type=2, global_num=18) + _data_msg(
+        _SESSION_FIELDS,
+        [
+            end_ts,
+            elapsed_s * 1000,
+            elapsed_s * 1000,  # total_timer_time
+            distance_m * 100,
+            320,  # total_calories: 320 kcal
+            3200,  # avg_speed: 3.2 m/s
+            4100,  # max_speed: 4.1 m/s
+            154,  # avg_heart_rate
+            168,  # max_heart_rate
+            86,  # avg_cadence
+            245,  # avg_power
+            310,  # max_power
+            125,  # total_ascent: 125 m
+            int((260.0 + 500) * 5),  # max_altitude: 260 m
+            int((180.0 + 500) * 5),  # min_altitude: 180 m
+        ],
+        local_type=2,
+    )
 
 
 def _fit_file(messages: bytes) -> bytes:
@@ -202,6 +263,7 @@ def make_running_fit(n_records: int = 20) -> bytes:
             (start_ts + half, start_ts + n_records, half, half * 3, 156, 164),  # lap 1
         ]
     )
+    messages += _session_message(start_ts + n_records, n_records, n_records * 3)
     return _fit_file(messages)
 
 

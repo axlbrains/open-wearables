@@ -16,7 +16,7 @@ BASE = "/api/v1/users/{user_id}/import/apple/xml/s3/multipart"
 class TestCreateMultipart:
     def test_create_success(self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
 
         response = client.post(
             BASE.format(user_id=user.id) + "/create",
@@ -43,7 +43,7 @@ class TestCreateMultipart:
         self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]
     ) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
         response = client.post(
             BASE.format(user_id=user.id) + "/create",
             headers=headers,
@@ -55,7 +55,7 @@ class TestCreateMultipart:
 class TestSignMultipart:
     def test_sign_returns_urls(self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
         response = client.post(
             BASE.format(user_id=user.id) + "/sign",
             headers=headers,
@@ -75,7 +75,7 @@ class TestSignMultipart:
         self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]
     ) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
         response = client.post(
             BASE.format(user_id=user.id) + "/sign",
             headers=headers,
@@ -98,7 +98,7 @@ class TestCompleteMultipart:
     ) -> None:
         monkeypatch.setattr(settings, "apple_xml_upload_completion_mode", "client")
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
         key = f"{user.id}/raw/export.xml"
 
         with patch("app.api.routes.v1.import_xml.dispatch_task") as mock_task:
@@ -134,7 +134,7 @@ class TestCompleteMultipart:
     ) -> None:
         monkeypatch.setattr(settings, "apple_xml_upload_completion_mode", "client")
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
         key = f"{user.id}/raw/export.xml"
 
         with patch("app.api.routes.v1.import_xml.dispatch_task") as mock_task:
@@ -158,7 +158,7 @@ class TestCompleteMultipart:
     ) -> None:
         monkeypatch.setattr(settings, "apple_xml_upload_completion_mode", "sns")
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
         key = f"{user.id}/raw/export.xml"
 
         with patch("app.api.routes.v1.import_xml.dispatch_task") as mock_task:
@@ -176,7 +176,7 @@ class TestCompleteMultipart:
         self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]
     ) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
         response = client.post(
             BASE.format(user_id=user.id) + "/complete",
             headers=headers,
@@ -188,7 +188,7 @@ class TestCompleteMultipart:
 class TestAbortMultipart:
     def test_abort_success(self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
         key = f"{user.id}/raw/export.xml"
         response = client.post(
             BASE.format(user_id=user.id) + "/abort",

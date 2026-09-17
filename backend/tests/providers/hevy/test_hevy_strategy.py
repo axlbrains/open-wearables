@@ -39,7 +39,7 @@ class TestHevyStrategy:
 
     def test_coverage(self, strategy: HevyStrategy) -> None:
         cov = strategy.coverage
-        assert cov.workout_fields == frozenset({"distance"})
+        assert cov.workout_fields == frozenset({"distance", "segments"})
         assert cov.timeseries == frozenset()
         assert cov.sleep_fields == frozenset()
         assert cov.health_scores == frozenset()

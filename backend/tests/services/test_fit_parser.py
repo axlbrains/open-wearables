@@ -149,3 +149,37 @@ class TestInvalidInput:
     def test_garbage_bytes_raises(self) -> None:
         with pytest.raises(fitdecode.FitError):
             parse_fit_file(b"not a fit file at all", uuid4(), uuid4())
+
+
+class TestSessionSummary:
+    """The FIT ``session`` message is the only whole-workout rollup some providers give us."""
+
+    def test_running_has_a_session_summary(self, running: FitParseResult) -> None:
+        assert running.session
+
+    def test_summary_is_keyed_for_event_record_metrics(self, running: FitParseResult) -> None:
+        """Keys must match EventRecordDetail field names so they merge without a translation step."""
+        from app.schemas.model_crud.activities import EventRecordDetailCreate
+
+        assert set(running.session) <= set(EventRecordDetailCreate.model_fields)
+
+    def test_expected_rollup_values(self, running: FitParseResult) -> None:
+        assert running.session["distance"] == Decimal("60.0")
+        assert running.session["energy_burned"] == Decimal("320.0")
+        assert running.session["heart_rate_avg"] == Decimal("154.0")
+        assert running.session["heart_rate_max"] == 168
+        assert running.session["average_speed"] == Decimal("3.2")
+        assert running.session["max_speed"] == Decimal("4.1")
+        assert running.session["average_cadence"] == Decimal("86.0")
+        assert running.session["average_watts"] == Decimal("245.0")
+        assert running.session["max_watts"] == Decimal("310.0")
+        assert running.session["total_elevation_gain"] == Decimal("125.0")
+        assert running.session["elev_high"] == Decimal("260.0")
+        assert running.session["elev_low"] == Decimal("180.0")
+
+    def test_timer_time_is_whole_seconds(self, running: FitParseResult) -> None:
+        assert running.session["moving_time_seconds"] == 20
+
+    def test_no_session_message_yields_empty_summary(self, cycling: FitParseResult) -> None:
+        """A file without a session rollup must not invent one."""
+        assert cycling.session == {}

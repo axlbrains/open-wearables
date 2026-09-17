@@ -5,6 +5,7 @@ from logging import getLogger
 from fastapi import APIRouter, HTTPException, status
 
 from app.config import settings
+from app.constants.sdk_providers import normalize_sdk_provider, sdk_providers
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.schemas.providers.mobile_sdk import SyncRequest
 from app.schemas.responses.upload import UploadDataResponse
@@ -70,14 +71,18 @@ def sync_sdk_data(
 
     # Raw dict, not SyncRequest: schema-validating here would 400 the whole batch on one
     # bad record pre-dispatch. The worker validates and reports failures to Sentry.
-    provider = str(body.get("provider") or "").lower()
+    raw_provider = str(body.get("provider") or "").lower()
 
     # Validate provider (routing decision — needed to select an import service)
-    if provider not in ("apple", "samsung", "google"):
+    provider = normalize_sdk_provider(raw_provider)
+    if provider is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Unsupported provider: {provider}. Supported: apple, samsung, google",
+            detail=f"Unsupported provider: {raw_provider}. Supported: {', '.join(sorted(sdk_providers()))}",
         )
+    # The worker and import service re-read the provider from the payload, so the
+    # canonical slug has to replace the alias here rather than travel alongside it.
+    body["provider"] = provider
 
     # Generate unique batch ID for tracking
     batch_id = str(uuid.uuid4())
@@ -152,6 +157,9 @@ def sync_sdk_data(
             "provider": provider,
             "batch_id": batch_id,
             "payload_ref": payload_ref,
+            # SDK versions that do not send these yet have no session, so the batch is live.
+            "sync_session_id": body.get("syncSessionId"),
+            "sync_type": body.get("syncType"),
         },
         dedup_key=f"sdk_upload:{batch_id}",
     )

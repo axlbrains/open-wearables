@@ -20,6 +20,10 @@
     {
       "source": "/data-migrations/:slug*",
       "destination": "/dev-guides/data-migrations"
+    },
+    {
+      "source": "/dev-guides/seed-data-generator",
+      "destination": "/developer-portal/settings/seed-data-generator"
     }
   ],
   "navigation": {
@@ -56,7 +60,8 @@
             "group": "Providers",
             "pages": [
               "providers/supported",
-              "providers/coverage"
+              "providers/coverage",
+              "providers/historical-data"
             ]
           },
           {
@@ -111,6 +116,24 @@
               "mcp-server/index",
               "mcp-server/claude-desktop",
               "mcp-server/cursor"
+            ]
+          },
+          {
+            "group": "Developer Portal",
+            "pages": [
+              "developer-portal/index",
+              {
+                "group": "Settings",
+                "pages": [
+                  "developer-portal/settings/credentials",
+                  "developer-portal/settings/providers",
+                  "developer-portal/settings/priorities",
+                  "developer-portal/settings/data-lifecycle",
+                  "developer-portal/settings/team",
+                  "developer-portal/settings/change-password",
+                  "developer-portal/settings/seed-data-generator"
+                ]
+              }
             ]
           },
           {
@@ -207,8 +230,6 @@
             "pages": [
               "POST /api/v1/providers/{provider}/users/{user_id}/sync",
               "GET /api/v1/providers/garmin/users/{user_id}/backfill/status",
-              "POST /api/v1/providers/garmin/users/{user_id}/backfill/cancel",
-              "POST /api/v1/providers/garmin/users/{user_id}/backfill/{type_name}/retry",
               "POST /api/v1/providers/{provider}/users/{user_id}/sync/historical"
             ]
           },
@@ -219,7 +240,8 @@
               "GET /api/v1/users/{user_id}/summaries/sleep",
               "GET /api/v1/users/{user_id}/summaries/body",
               "GET /api/v1/users/{user_id}/summaries/recovery",
-              "GET /api/v1/users/{user_id}/summaries/data"
+              "GET /api/v1/users/{user_id}/summaries/data",
+              "GET /api/v1/users/{user_id}/summaries/data/timeline"
             ]
           },
           {
@@ -296,7 +318,9 @@
               "GET /api/v1/users/{user_id}/sync/stream",
               "GET /api/v1/users/{user_id}/sync/recent",
               "GET /api/v1/users/{user_id}/sync/runs",
-              "GET /api/v1/sync/runs"
+              "GET /api/v1/sync/runs",
+              "GET /api/v1/users/{user_id}/sync/history",
+              "GET /api/v1/sync/history/{run_key}"
             ]
           }
         ]

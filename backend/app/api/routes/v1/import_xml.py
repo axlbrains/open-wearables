@@ -59,7 +59,6 @@ def create_multipart_upload(
 
 @router.post(
     "/users/{user_id}/import/apple/xml/s3/multipart/sign",
-    status_code=status.HTTP_200_OK,
 )
 def sign_multipart_parts(
     user_id: str,
@@ -144,7 +143,6 @@ def complete_multipart_upload(
 
 @router.post(
     "/users/{user_id}/import/apple/xml/s3/multipart/abort",
-    status_code=status.HTTP_200_OK,
 )
 def abort_multipart_upload(
     user_id: str,

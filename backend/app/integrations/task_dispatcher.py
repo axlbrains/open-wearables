@@ -34,7 +34,6 @@ class RegisteredTask(str, Enum):
     FILL_MISSING_SLEEP_SCORES = "fill_missing_sleep_scores"
     FINALIZE_STALE_SLEEPS = "finalize_stale_sleeps"
     RUN_DAILY_ARCHIVAL = "run_daily_archival"
-    GC_STUCK_BACKFILLS = "gc_stuck_backfills"
     COMPLETE_AND_PROCESS_AWS_UPLOAD = "complete_and_process_aws_upload"
     PROCESS_AWS_UPLOAD = "process_aws_upload"
     PROCESS_SDK_UPLOAD = "process_sdk_upload"
@@ -51,6 +50,8 @@ class RegisteredTask(str, Enum):
     TRIGGER_GARMIN_BACKFILL_FOR_TYPE = "trigger_garmin_backfill_for_type"
     TRIGGER_GARMIN_NEXT_PENDING_TYPE = "trigger_garmin_next_pending_type"
     VACUUM_KV_EXPIRED = "vacuum_kv_expired"
+    CLOSE_STALE_SYNC_RUNS = "close_stale_sync_runs"
+    RENEW_OURA_WEBHOOKS = "renew_oura_webhooks"
 
 
 @dataclass(frozen=True)
@@ -94,11 +95,6 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
     RegisteredTask.FINALIZE_STALE_SLEEPS: TaskDefinition(
         task_name="app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps",
         callable_path="app.integrations.celery.tasks.finalize_stale_sleep_task.finalize_stale_sleeps",
-    ),
-    RegisteredTask.GC_STUCK_BACKFILLS: TaskDefinition(
-        task_name="app.integrations.celery.tasks.garmin.gc_task.gc_stuck_backfills",
-        callable_path="app.integrations.celery.tasks.garmin.gc_task.gc_stuck_backfills",
-        cloud_tasks_queue="garmin_backfill",
     ),
     RegisteredTask.PROCESS_AWS_UPLOAD: TaskDefinition(
         task_name="app.integrations.celery.tasks.process_aws_upload_task.process_aws_upload",
@@ -171,6 +167,16 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
     RegisteredTask.VACUUM_KV_EXPIRED: TaskDefinition(
         task_name="app.integrations.celery.tasks.kv_vacuum_task.vacuum_kv_expired",
         callable_path="app.integrations.celery.tasks.kv_vacuum_task.vacuum_kv_expired",
+    ),
+    # Prod runs no celery beat, so upstream's beat entries need a RegisteredTask here
+    # plus a Cloud Scheduler job hitting /api/v1/internal/tasks/<task>.
+    RegisteredTask.CLOSE_STALE_SYNC_RUNS: TaskDefinition(
+        task_name="app.integrations.celery.tasks.close_stale_sync_runs_task.close_stale_sync_runs",
+        callable_path="app.integrations.celery.tasks.close_stale_sync_runs_task.close_stale_sync_runs",
+    ),
+    RegisteredTask.RENEW_OURA_WEBHOOKS: TaskDefinition(
+        task_name="app.integrations.celery.tasks.renew_oura_webhooks_task.renew_oura_webhooks",
+        callable_path="app.integrations.celery.tasks.renew_oura_webhooks_task.renew_oura_webhooks",
     ),
 }
 

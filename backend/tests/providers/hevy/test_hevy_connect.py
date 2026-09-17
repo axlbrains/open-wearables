@@ -22,7 +22,7 @@ def _mock_user_info_response(status_code: int = 200) -> MagicMock:
 class TestHevyApiKeyConnect:
     def test_connect_creates_connection(self, client: TestClient, db: Session) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
 
         with patch(
             "app.services.providers.hevy.strategy.httpx.get", return_value=_mock_user_info_response()
@@ -54,7 +54,7 @@ class TestHevyApiKeyConnect:
 
     def test_reconnect_rotates_key_without_duplicate_row(self, client: TestClient, db: Session) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
         new_key = "99999999-8888-7777-6666-555555555555"
 
         with patch("app.services.providers.hevy.strategy.httpx.get", return_value=_mock_user_info_response()):
@@ -75,7 +75,7 @@ class TestHevyApiKeyConnect:
 
     def test_rejected_key_returns_400(self, client: TestClient, db: Session) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
 
         with patch("app.services.providers.hevy.strategy.httpx.get", return_value=MagicMock(status_code=401)):
             response = client.post(
@@ -94,7 +94,7 @@ class TestHevyApiKeyConnect:
 
     def test_oauth_provider_rejects_api_key_connect(self, client: TestClient, db: Session) -> None:
         user = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
 
         response = client.post(
             f"/api/v1/users/{user.id}/connections/garmin",
@@ -120,7 +120,7 @@ class TestSingleActiveConnectionPerAccount:
     def test_connecting_same_account_elsewhere_revokes_the_old_one(self, client: TestClient, db: Session) -> None:
         first = UserFactory()
         second = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
 
         with patch("app.services.providers.hevy.strategy.httpx.get", return_value=_mock_user_info_response()):
             client.post(f"/api/v1/users/{first.id}/connections/hevy", json={"api_key": HEVY_KEY}, headers=headers)
@@ -142,7 +142,7 @@ class TestSingleActiveConnectionPerAccount:
     def test_other_users_other_accounts_are_untouched(self, client: TestClient, db: Session) -> None:
         first = UserFactory()
         second = UserFactory()
-        headers = api_key_headers(ApiKeyFactory().id)
+        headers = api_key_headers(ApiKeyFactory().plain_key)
 
         other_account = _mock_user_info_response()
         other_account.json.return_value = {"id": "hevy-user-2", "name": "Jane"}

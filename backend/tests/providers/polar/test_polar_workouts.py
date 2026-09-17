@@ -7,7 +7,7 @@ Tests the PolarWorkouts class for fetching and processing workout data from Pola
 from datetime import datetime
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.orm import Session
@@ -683,3 +683,214 @@ class TestGetUnifiedWorkoutType:
     )
     def test_mappings(self, sport: str, detailed: str, expected: WorkoutType) -> None:
         assert get_unified_workout_type(sport, detailed) == expected
+
+
+class TestPolarFitIngestion:
+    """Polar's exercise JSON carries four metrics; everything else lives in the FIT file."""
+
+    @pytest.fixture
+    def workouts(self, db: Session) -> PolarWorkouts:
+        from app.models import EventRecord, User
+        from app.repositories.event_record_repository import EventRecordRepository
+        from app.repositories.user_connection_repository import UserConnectionRepository
+        from app.repositories.user_repository import UserRepository
+        from app.services.providers.polar.oauth import PolarOAuth
+
+        connection_repo = UserConnectionRepository()
+        return PolarWorkouts(
+            workout_repo=EventRecordRepository(EventRecord),
+            connection_repo=connection_repo,
+            provider_name="polar",
+            api_base_url="https://www.polaraccesslink.com",
+            oauth=PolarOAuth(
+                user_repo=UserRepository(User),
+                connection_repo=connection_repo,
+                provider_name="polar",
+                api_base_url="https://www.polaraccesslink.com",
+            ),
+        )
+
+    def _save(
+        self,
+        workouts: PolarWorkouts,
+        db: Session,
+        user_id: UUID,
+        raw: dict,
+    ) -> None:
+        exercise = PolarExerciseJSON(**raw)
+        workouts._save_bundles(db, user_id, workouts._build_bundles([exercise], user_id))
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_session_rollup_fills_fields_the_json_lacks(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        # Arrange
+        from tests.fixtures.fit_builder import make_running_fit
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        mock_download.return_value = make_running_fit()
+
+        # Act
+        self._save(workouts, db, user.id, sample_polar_exercise)
+
+        # Assert
+        record = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar")
+        detail = record.workout_detail
+        assert detail.average_speed == Decimal("3.2")
+        assert detail.max_speed == Decimal("4.1")
+        assert detail.average_cadence == Decimal("86")
+        assert detail.average_watts == Decimal("245")
+        assert detail.total_elevation_gain == Decimal("125")
+        assert detail.moving_time_seconds == 20
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_json_metrics_win_over_the_fit_rollup(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        """Polar's own rollup is authoritative where the two overlap."""
+        # Arrange
+        from tests.fixtures.fit_builder import make_running_fit
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        mock_download.return_value = make_running_fit()
+
+        # Act
+        self._save(workouts, db, user.id, sample_polar_exercise)
+
+        # Assert — JSON says 10000 m / 650 kcal / 175 max HR, the synthetic FIT says otherwise
+        detail = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar").workout_detail
+        assert detail.distance == Decimal("10000")
+        assert detail.energy_burned == Decimal("650")
+        assert detail.heart_rate_max == 175
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_laps_are_stored_as_segments(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        # Arrange
+        from tests.fixtures.fit_builder import make_running_fit
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        mock_download.return_value = make_running_fit()
+
+        # Act
+        self._save(workouts, db, user.id, sample_polar_exercise)
+
+        # Assert
+        detail = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar").workout_detail
+        assert len(detail.segments) == 2
+        assert all(seg["kind"] == "lap" for seg in detail.segments)
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_samples_are_persisted(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        # Arrange
+        from app.models import DataPointSeries, DataSource
+        from tests.fixtures.fit_builder import make_running_fit
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        mock_download.return_value = make_running_fit()
+
+        # Act
+        with patch("app.services.providers.polar.workouts.settings.ingest_workout_samples", True):
+            self._save(workouts, db, user.id, sample_polar_exercise)
+
+        # Assert
+        db.flush()
+        stored = (
+            db.query(DataPointSeries)
+            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            .filter(DataSource.user_id == user.id)
+            .count()
+        )
+        assert stored == 240, "every FIT sample should reach data_point_series"
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_fit_is_not_refetched_on_a_re_cover(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        """Sync windows re-cover the same exercise hourly; the FIT is immutable."""
+        # Arrange
+        from tests.fixtures.fit_builder import make_running_fit
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        mock_download.return_value = make_running_fit()
+
+        # Act
+        self._save(workouts, db, user.id, sample_polar_exercise)
+        db.flush()
+        self._save(workouts, db, user.id, sample_polar_exercise)
+
+        # Assert
+        assert mock_download.call_count == 1
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_missing_fit_still_saves_the_workout(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        """Phone-logged exercises have no recorded file; that is not a failure."""
+        # Arrange
+        from fastapi import HTTPException, status
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        mock_download.side_effect = HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+        # Act
+        self._save(workouts, db, user.id, sample_polar_exercise)
+
+        # Assert
+        detail = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar").workout_detail
+        assert detail.distance == Decimal("10000")
+        assert detail.average_speed is None
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_unparseable_fit_still_saves_the_workout(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        # Arrange
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        mock_download.return_value = b"not a fit file"
+
+        # Act
+        self._save(workouts, db, user.id, sample_polar_exercise)
+
+        # Assert
+        record = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar")
+        assert record is not None
+        assert record.workout_detail.distance == Decimal("10000")

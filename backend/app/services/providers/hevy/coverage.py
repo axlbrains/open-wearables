@@ -12,7 +12,8 @@ from app.schemas.enums.health_score_category import HealthScoreCategory
 
 TIMESERIES: frozenset[SeriesType] = frozenset()
 
-WORKOUT_FIELDS: frozenset[str] = frozenset({"distance"})
+# Exercises and sets (reps, weights, RPE) are preserved losslessly in ``segments``.
+WORKOUT_FIELDS: frozenset[str] = frozenset({"distance", "segments"})
 
 SLEEP_FIELDS: frozenset[str] = frozenset()
 
