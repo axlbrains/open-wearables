@@ -39,7 +39,11 @@ class HevyStrategy(BaseProviderStrategy):
             connection_repo=self.connection_repo,
             provider_name=self.name,
             api_base_url=self.api_base_url,
-            oauth=None,  # type: ignore[arg-type]  # API-key auth; no OAuth template exists
+            # API-key auth: there is no OAuth template to pass. The base template types
+            # oauth as required because every upstream provider has one; relaxing it there
+            # would cascade None-checks through every provider, so the mismatch is pinned
+            # here instead. Goes away if Hevy lands upstream with an optional oauth.
+            oauth=None,  # ty: ignore[invalid-argument-type]
         )
 
     @property
@@ -131,6 +135,13 @@ class HevyStrategy(BaseProviderStrategy):
                 token_expires_at=None,
             ),
         )
+        if connection is None:
+            # create() is wrapped in @handle_duplicates, which returns None when a unique
+            # violation fires and it cannot then find the row that caused it. The
+            # get_by_user_and_provider branch above already covers the expected duplicate,
+            # so reaching here means the row vanished between the two queries.
+            raise RuntimeError(f"Could not create or recover the {self.name} connection for user {user_id}")
+
         on_connection_created(
             user_id=user_id,
             provider=self.name,

@@ -51,8 +51,15 @@ def _retry_ingest(db: DbSession, user_uuid: UUID, activity_id: str, attempt: int
     # Imported lazily: factory -> strategies -> strava.workouts imports this
     # module for schedule_stream_retry, so a module-level import would cycle.
     from app.services.providers.factory import ProviderFactory
+    from app.services.providers.strava.workouts import StravaWorkouts
 
+    # BaseProviderStrategy types `workouts` as the optional base template, but the
+    # retry flow needs Strava's own process_push_activity. Anything else means the
+    # strategy was misconfigured, not that this activity is unretryable.
     workouts = ProviderFactory().get_provider("strava").workouts
+    if not isinstance(workouts, StravaWorkouts):
+        raise RuntimeError(f"Strava strategy has no StravaWorkouts template (got {type(workouts).__name__})")
+
     activity_data = workouts.get_workout_detail_from_api(db, user_uuid, activity_id)
     if not activity_data:
         log_structured(

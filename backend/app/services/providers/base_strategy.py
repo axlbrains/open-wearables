@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Literal, Protocol, runtime_checkable
 from uuid import UUID
 
+from app.database import DbSession
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
-from app.models import EventRecord, User
+from app.models import EventRecord, User, UserConnection
 from app.repositories.event_record_repository import EventRecordRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
 from app.repositories.user_repository import UserRepository
@@ -135,6 +136,20 @@ class ProviderCapabilities:
 
 class InvalidApiKeyError(Exception):
     """An api_key_connect provider rejected the supplied API key."""
+
+
+@runtime_checkable
+class ApiKeyConnectable(Protocol):
+    """What ``ProviderCapabilities.api_key_connect = True`` promises.
+
+    The factory hands back the abstract strategy, so the connect endpoint has no
+    static way to know the method exists. Declaring the contract here means the
+    capability flag and the method cannot drift apart unnoticed.
+    """
+
+    def connect_with_api_key(self, db: DbSession, user_id: UUID, api_key: str) -> UserConnection:
+        """Validate the key against the provider and store it on the connection."""
+        ...
 
 
 class BaseProviderStrategy(ABC):

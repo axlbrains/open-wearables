@@ -13,7 +13,7 @@ from app.schemas.auth import ConnectionStatus, LiveSyncMode, SDKAuthContext
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.user_management import ApiKeyConnectRequest, UserConnectionWithCapabilities
 from app.services import ApiKeyDep, user_connection_service
-from app.services.providers.base_strategy import BaseProviderStrategy, InvalidApiKeyError
+from app.services.providers.base_strategy import ApiKeyConnectable, BaseProviderStrategy, InvalidApiKeyError
 from app.services.providers.factory import ProviderFactory
 from app.utils.auth import CombinedAuthDep
 
@@ -93,14 +93,13 @@ def connect_provider_with_api_key_endpoint(
     OAuth providers must go through /oauth/{provider}/authorize.
     """
     strategy = factory.get_provider(provider.value)
-    if not strategy.capabilities.api_key_connect:
+    if not strategy.capabilities.api_key_connect or not isinstance(strategy, ApiKeyConnectable):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Provider {provider.value} does not support API-key connect; use the OAuth flow",
         )
     try:
-        # Strategies with api_key_connect=True implement connect_with_api_key.
-        connection = strategy.connect_with_api_key(db, user_id, body.api_key)  # type: ignore[attr-defined]
+        connection = strategy.connect_with_api_key(db, user_id, body.api_key)
     except InvalidApiKeyError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 

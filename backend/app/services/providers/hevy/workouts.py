@@ -39,11 +39,17 @@ _MAX_PAGES = 1000
 class HevyWorkouts(BaseWorkoutsTemplate):
     """Hevy implementation of workout syncing (API-key auth, events-feed pull)."""
 
-    def _get_connection(self, db: DbSession, user_id: UUID) -> UserConnection:
+    def _get_connection(self, db: DbSession, user_id: UUID) -> tuple[UserConnection, str]:
+        """The active connection and its API key, or a hard failure.
+
+        The key comes back alongside the connection so the non-null guarantee survives the
+        call: ``UserConnection.access_token`` is optional on the model, while for Hevy the
+        key *is* the connection, and the 401 path still needs the row to revoke it.
+        """
         connection = self.connection_repo.get_by_user_and_provider(db, user_id, self.provider_name)
         if connection is None or connection.status != ConnectionStatus.ACTIVE or not connection.access_token:
             raise ValueError(f"No active Hevy connection with an API key for user {user_id}")
-        return connection
+        return connection, connection.access_token
 
     def _make_api_request(  # type: ignore[override]
         self,
@@ -61,8 +67,8 @@ class HevyWorkouts(BaseWorkoutsTemplate):
         refresh flow — a rejected key can only be replaced by the user
         submitting a new one.
         """
-        connection = self._get_connection(db, user_id)
-        request_headers = {"api-key": connection.access_token, **(headers or {})}
+        connection, api_key = self._get_connection(db, user_id)
+        request_headers = {"api-key": api_key, **(headers or {})}
         response = httpx.request(
             method,
             f"{self.api_base_url}{endpoint}",

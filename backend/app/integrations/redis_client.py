@@ -11,7 +11,6 @@ unchanged.
 
 from functools import lru_cache
 from logging import getLogger
-from typing import Any
 
 import redis
 
@@ -32,12 +31,20 @@ def _redis_configured() -> bool:
 
 
 @lru_cache()
-def get_redis_client() -> Any:
+def get_redis_client() -> redis.Redis:
     """Singleton accessor for the Redis-shaped client.
 
     Returns a real ``redis.Redis`` when ``REDIS_HOST`` points to an actual
     server; falls back to the Postgres-backed ``KvStoreClient`` otherwise.
     The cached singleton means we resolve the backend once per process.
+
+    The declared type is ``redis.Redis`` even though prod always gets the
+    KvStore stand-in: that IS the contract — KvStore has to match Redis's
+    surface, signatures and kwargs included, or upstream code 500s at runtime
+    on the first call to a primitive it lacks. Typing it ``Any`` hid that from
+    the checker and, as a side effect, turned every upstream ``ty: ignore``
+    around a Redis call into an "unused suppression" warning we would have had
+    to strip from otherwise-pristine upstream files on every sync.
     """
     if _redis_configured():
         return redis.from_url(settings.redis_url, decode_responses=True)
@@ -49,4 +56,4 @@ def get_redis_client() -> Any:
     from app.integrations.kv_store import KvStoreClient
 
     logger.info("REDIS_HOST not configured — using Postgres-backed kv_store")
-    return KvStoreClient(engine)
+    return KvStoreClient(engine)  # ty: ignore[invalid-return-type]  # structural stand-in, see above
