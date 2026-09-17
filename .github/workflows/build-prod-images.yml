@@ -1,0 +1,101 @@
+name: Build prod images
+
+# Builds the prod backend/frontend images and pushes them to our Artifact
+# Registry, as an alternative to the local `docker buildx` recipe in CLAUDE.md.
+# Cloud Build is not usable (no account here holds builds.create), and the local
+# path dies whenever the Mac's Docker VM does — this runs the same buildx command
+# on a runner, authenticating through the WIF provider terraform-deploy already uses.
+#
+# Deploying is still manual and separate: this only publishes the tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semver tag to build and push, e.g. 0.9.1"
+        required: true
+      images:
+        description: "Which images to build"
+        required: true
+        default: both
+        type: choice
+        options: [both, backend, frontend]
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: axl-platform-prod
+  REGISTRY: europe-west1-docker.pkg.dev
+  REPO: europe-west1-docker.pkg.dev/axl-platform-prod/open-wearables-prod
+
+jobs:
+  build:
+    name: Build ${{ inputs.images }} @ ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          # Prod tags are plain semver; anything else is a typo we do not want in the registry.
+          printf '%s' "$VERSION" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' || {
+            echo "::error::version '$VERSION' is not a plain semver tag"
+            exit 1
+          }
+
+      - uses: actions/checkout@v6
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: projects/489210400185/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-terraform@axl-platform-prod.iam.gserviceaccount.com
+          token_format: "access_token"
+          create_credentials_file: true
+          export_environment_variables: true
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Log in to Artifact Registry
+        run: gcloud auth configure-docker "$REGISTRY" --quiet
+
+      - uses: docker/setup-buildx-action@v3
+
+      # linux/amd64 only: that is what Cloud Run runs, and a second arch would
+      # double the build for nothing.
+      - name: Build and push backend
+        if: inputs.images == 'both' || inputs.images == 'backend'
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          platforms: linux/amd64
+          push: true
+          build-args: APP_VERSION=${{ inputs.version }}
+          tags: ${{ env.REPO }}/backend:${{ inputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The frontend bakes the API URL at build time (TanStack Start SSR).
+      - name: Build and push frontend
+        if: inputs.images == 'both' || inputs.images == 'frontend'
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          platforms: linux/amd64
+          push: true
+          build-args: VITE_API_URL=https://ow-api.axl.coach
+          tags: ${{ env.REPO }}/frontend:${{ inputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          echo "### Pushed \`${{ inputs.version }}\` (${{ inputs.images }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy with \`gcloud run services update ... --image $REPO/<img>:${{ inputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
