@@ -101,7 +101,10 @@ class TestRetryTask:
     """The task must reuse the regular workouts-module flow, not reimplement it."""
 
     def _run(self, activity_data: dict | None, attempt: int = 1) -> MagicMock:
-        mock_workouts = MagicMock()
+        # spec'd to StravaWorkouts: the task narrows the strategy's optional base
+        # template with isinstance, and a bare MagicMock is not an instance of it.
+        # It also makes the mock reject method names the real class does not have.
+        mock_workouts = MagicMock(spec=StravaWorkouts)
         mock_workouts.get_workout_detail_from_api.return_value = activity_data
         mock_strategy = MagicMock(workouts=mock_workouts)
         with (
