@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Any, Iterable
 from uuid import UUID, uuid4
 
+import httpx
 import isodate
 from fastapi import HTTPException, status
 from pydantic import ValidationError
@@ -253,8 +254,13 @@ class PolarWorkouts(BaseWorkoutsTemplate):
                 self.provider_name,
                 f"{self.api_base_url}/v3/exercises/{exercise_id}/fit",
             )
-        except HTTPException as exc:
-            if exc.status_code in (status.HTTP_204_NO_CONTENT, status.HTTP_404_NOT_FOUND):
+        except (httpx.HTTPStatusError, HTTPException) as exc:
+            # download_binary_content surfaces the provider status through
+            # response.raise_for_status(), i.e. httpx.HTTPStatusError -- not the
+            # fastapi HTTPException the JSON paths raise. Both are matched so the
+            # quiet branch cannot go dead again if the helper changes.
+            code = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else exc.status_code
+            if code in (status.HTTP_204_NO_CONTENT, status.HTTP_404_NOT_FOUND):
                 # Phone-logged and manually entered exercises have no recorded file.
                 # A permanent property of the exercise, so this stays quiet rather than
                 # re-reporting on every sync window that re-covers it.

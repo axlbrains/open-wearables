@@ -850,21 +850,32 @@ class TestPolarFitIngestion:
         # Assert
         assert mock_download.call_count == 1
 
+    @patch("app.services.providers.polar.workouts.log_and_capture_error")
     @patch("app.services.providers.polar.workouts.download_binary_content")
-    def test_missing_fit_still_saves_the_workout(
+    def test_missing_fit_is_quiet_and_still_saves_the_workout(
         self,
         mock_download: MagicMock,
+        mock_capture: MagicMock,
         workouts: PolarWorkouts,
         db: Session,
         sample_polar_exercise: dict,
     ) -> None:
-        """Phone-logged exercises have no recorded file; that is not a failure."""
+        """Phone-logged exercises have no recorded file; that is not a failure.
+
+        The raise is httpx.HTTPStatusError, because download_binary_content surfaces the
+        status through response.raise_for_status() rather than the fastapi HTTPException
+        the JSON paths raise. Catching only the latter left the quiet branch dead and sent
+        a Sentry event per sync window, forever, for an exercise that will never have a file.
+        """
         # Arrange
-        from fastapi import HTTPException, status
+        import httpx
 
         user = UserFactory()
         UserConnectionFactory(user=user, provider="polar")
-        mock_download.side_effect = HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        request = httpx.Request("GET", "https://www.polaraccesslink.com/v3/exercises/ABC123/fit")
+        mock_download.side_effect = httpx.HTTPStatusError(
+            "404", request=request, response=httpx.Response(404, request=request)
+        )
 
         # Act
         self._save(workouts, db, user.id, sample_polar_exercise)
@@ -873,6 +884,35 @@ class TestPolarFitIngestion:
         detail = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar").workout_detail
         assert detail.distance == Decimal("10000")
         assert detail.average_speed is None
+        mock_capture.assert_not_called()
+
+    @patch("app.services.providers.polar.workouts.log_and_capture_error")
+    @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_a_real_download_failure_is_still_reported(
+        self,
+        mock_download: MagicMock,
+        mock_capture: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        """Only "no such file" is quiet -- a 500 is a genuine problem."""
+        # Arrange
+        import httpx
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        request = httpx.Request("GET", "https://www.polaraccesslink.com/v3/exercises/ABC123/fit")
+        mock_download.side_effect = httpx.HTTPStatusError(
+            "500", request=request, response=httpx.Response(500, request=request)
+        )
+
+        # Act
+        self._save(workouts, db, user.id, sample_polar_exercise)
+
+        # Assert
+        assert workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar") is not None
+        mock_capture.assert_called_once()
 
     @patch("app.services.providers.polar.workouts.download_binary_content")
     def test_unparseable_fit_still_saves_the_workout(
