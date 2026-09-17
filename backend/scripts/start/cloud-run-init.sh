@@ -4,6 +4,14 @@ set -e -x
 echo 'Applying migrations...'
 /opt/venv/bin/alembic upgrade head
 
+# Splits the legacy `google` provider into health_connect (SDK) and google_health
+# (cloud OAuth). Must stay ahead of init_provider_settings.py, which seeds a google_health
+# row that the rename would collide with. Idempotent, no-op once split.
+# Upstream runs this from scripts/start/app.sh, which prod never executes.
+echo 'Running google provider split...'
+/opt/venv/bin/python scripts/data_migrations/split_google_provider.py \
+    || echo "Warning: google provider split failed — will retry on next run."
+
 echo 'Initializing provider settings...'
 /opt/venv/bin/python scripts/init_provider_settings.py
 
