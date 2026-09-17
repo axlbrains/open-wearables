@@ -51,7 +51,20 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = 'py313'
-exclude = ["README.md", ".python-version", "LICENSE", "app/models/"]
+exclude = [
+    "README.md",
+    ".python-version",
+    "LICENSE",
+    "app/models/",
+    # `alembic merge` writes the template's unused op/sa imports, and these revisions are
+    # already applied everywhere. scripts/check_migrations.py compares the down_revision
+    # line verbatim, so any reformatting — even a trailing `# fmt: skip` — reads as a
+    # re-point and fails the chain check. Frozen instead. Lint NEW merge revisions with
+    # `uv run ruff check .` before the first commit and they never need an entry here.
+    "migrations/versions/2026_07_06_1050-b6e275a43d8b_merge_upstream_axl_heads_2026_07_06.py",
+    "migrations/versions/2026_08_15_2116-20f158966eb6_merge_upstream_and_axl_heads_2026_08_15.py",
+    "migrations/versions/2026_09_07_0843-8bc287ccbf32_merge_upstream_and_axl_heads_2026_09_07.py",
+]
 
 [tool.ruff.lint]
 select = [
