@@ -93,6 +93,20 @@ _HS_UPDATE_FROM_SOURCE = text("""
 # discriminator first, then the catch-all.
 _SR_SDK_UPDATE = text("UPDATE sync_run SET provider = :sdk WHERE provider = :legacy AND source = :sdk_source")
 _SR_UPDATE = text("UPDATE sync_run SET provider = :api WHERE provider = :legacy")
+# A deployment whose seeding ran before this migration already holds the target row, and
+# provider is the primary key here, so a bare rename aborts the whole transaction and
+# nothing moves. Fold the legacy row's settings onto the seeded one and drop it instead;
+# the plain rename still covers the ordinary case where no target exists yet.
+_PS_FOLD_INTO_EXISTING = text("""
+    UPDATE provider_settings target
+    SET is_enabled = legacy.is_enabled,
+        live_sync_mode = legacy.live_sync_mode,
+        webhook_secret = legacy.webhook_secret,
+        data_granularity = legacy.data_granularity
+    FROM provider_settings legacy
+    WHERE target.provider = :api AND legacy.provider = :legacy
+""")
+_PS_DROP_FOLDED = text("DELETE FROM provider_settings WHERE provider = :legacy")
 _PS_UPDATE = text("UPDATE provider_settings SET provider = :api WHERE provider = :legacy")
 
 # An SDK upload under the old slug left a tokenless connection behind. disconnect() keeps
@@ -108,6 +122,12 @@ _PP_CLONE_FOR_SDK = text("""
     FROM provider_priority
     WHERE provider = :legacy
       AND NOT EXISTS (SELECT 1 FROM provider_priority WHERE provider = :sdk)
+""")
+# Same collision guard as provider_settings: drop the legacy ranking when the target
+# already carries one rather than letting the rename abort the transaction.
+_PP_DROP_IF_TARGET_EXISTS = text("""
+    DELETE FROM provider_priority
+    WHERE provider = :legacy AND EXISTS (SELECT 1 FROM provider_priority WHERE provider = :api)
 """)
 _PP_UPDATE = text("UPDATE provider_priority SET provider = :api WHERE provider = :legacy")
 
@@ -136,9 +156,13 @@ def split_google_provider(db: Session, *, dry_run: bool) -> dict[str, int]:
     user_connection_api = _rowcount(db, _UC_UPDATE)
     sync_run = _rowcount(db, _SR_SDK_UPDATE) + _rowcount(db, _SR_UPDATE)
 
-    provider_settings = _rowcount(db, _PS_UPDATE)
+    # Fold-then-drop runs first; when it applies, the rename below finds nothing left.
+    provider_settings = 0
+    if _rowcount(db, _PS_FOLD_INTO_EXISTING):
+        provider_settings = _rowcount(db, _PS_DROP_FOLDED)
+    provider_settings += _rowcount(db, _PS_UPDATE)
     _rowcount(db, _PP_CLONE_FOR_SDK)  # must copy the legacy ranking before it is renamed
-    provider_priority = _rowcount(db, _PP_UPDATE)
+    provider_priority = _rowcount(db, _PP_DROP_IF_TARGET_EXISTS) + _rowcount(db, _PP_UPDATE)
 
     result = {
         "data_source_api": data_source_api,
