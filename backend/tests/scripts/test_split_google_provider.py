@@ -91,9 +91,7 @@ class TestProviderSettingsCollision:
         split(db, dry_run=False)
 
         # Assert
-        mode = db.execute(
-            text("SELECT live_sync_mode FROM provider_settings WHERE provider = :p"), {"p": API}
-        ).scalar()
+        mode = db.execute(text("SELECT live_sync_mode FROM provider_settings WHERE provider = :p"), {"p": API}).scalar()
         assert mode == "pull"
 
     def test_is_idempotent(self, db: Session) -> None:
