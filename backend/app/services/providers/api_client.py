@@ -110,6 +110,7 @@ def make_authenticated_request(
     json_data: dict[str, Any] | None = None,
     expect_json: bool = True,
     http2: bool = False,
+    quiet_statuses: tuple[int, ...] = (),
 ) -> Any:
     """Make authenticated request to provider API.
 
@@ -209,6 +210,13 @@ def make_authenticated_request(
                     "accepted": response.status_code == 202,
                 }
 
+            # Polar answers "nothing new here" with 204/an empty body on several
+            # endpoints. Handing that to .json() raises JSONDecodeError, which the
+            # generic handler below turned into an error log plus a 500 — a provider
+            # saying "no data" reported as our failure.
+            if response.status_code == status.HTTP_204_NO_CONTENT or not response.content.strip():
+                return None
+
             result = response.json()
 
             # Some APIs (like Suunto) return 200 OK but include error in response body
@@ -250,14 +258,21 @@ def make_authenticated_request(
                 time.sleep(backoff_delay)
                 continue
 
-            log_structured(
-                logger,
-                "error",
-                "API error",
-                provider_name=provider_name,
-                user_id=str(user_id),
-                error=e.response.text,
-            )
+            # quiet_statuses are the ones the caller told us it expects and will
+            # handle (e.g. a Polar feature this athlete never enabled). It still
+            # raises, so the caller's flow is unchanged — we just do not report a
+            # provider's "no data for you" as our own error.
+            if e.response.status_code not in quiet_statuses:
+                log_structured(
+                    logger,
+                    "error",
+                    "API error",
+                    provider_name=provider_name,
+                    user_id=str(user_id),
+                    endpoint=endpoint,
+                    status_code=e.response.status_code,
+                    error=e.response.text,
+                )
             if e.response.status_code == 401:
                 raise HTTPException(
                     status_code=401,
@@ -277,6 +292,7 @@ def make_authenticated_request(
                 "API request failed",
                 provider_name=provider_name,
                 user_id=str(user_id),
+                endpoint=endpoint,
                 error=str(e),
             )
             raise HTTPException(

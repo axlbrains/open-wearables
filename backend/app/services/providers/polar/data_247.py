@@ -113,6 +113,12 @@ class Polar247Data(Base247DataTemplate):
                 method="GET",
                 params=params,
                 headers=headers,
+                # An optional endpoint answering 401/404 means this athlete's device or
+                # consent does not cover the feature. The branches below already treat
+                # that as "no data"; without this the api_client still logged it as an
+                # error first, ~130 lines a day for one athlete, with no endpoint in the
+                # payload to tell which call it even was.
+                quiet_statuses=() if self._is_core_endpoint(endpoint) else (401, 404),
             )
             store_raw_payload(
                 source="api_response",
@@ -125,9 +131,6 @@ class Polar247Data(Base247DataTemplate):
         except HTTPException as e:
             # 404 = no data for this date / feature not available on this device
             if e.status_code == status.HTTP_404_NOT_FOUND:
-                return None
-            # 204 No Content: api_client raises 500 wrapping a JSONDecodeError on empty body
-            if e.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR and "Expecting value" in str(e.detail):
                 return None
             # 401 on an OPTIONAL endpoint = the user's device/consent doesn't cover that
             # Polar feature (Elixir & SleepWise are per-device and separately consented);
