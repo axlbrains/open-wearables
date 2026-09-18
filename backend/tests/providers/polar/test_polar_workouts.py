@@ -827,6 +827,42 @@ class TestPolarFitIngestion:
         assert stored == 240, "every FIT sample should reach data_point_series"
 
     @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_a_skipped_re_cover_keeps_the_stored_fit_metrics(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        """The skip must not erase what the first pass stored.
+
+        The detail upsert writes every column, so a detail rebuilt from the JSON alone
+        nulls out everything the FIT contributed -- moving_time_seconds included, which
+        is the marker the skip is based on. In prod that oscillated: ingest, erase,
+        re-download, erase, twelve times a day, with the metrics present half the time.
+        """
+        # Arrange
+        from tests.fixtures.fit_builder import make_running_fit
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        mock_download.return_value = make_running_fit()
+
+        # Act — two sync windows re-covering the same exercise
+        self._save(workouts, db, user.id, sample_polar_exercise)
+        db.flush()
+        self._save(workouts, db, user.id, sample_polar_exercise)
+        db.flush()
+
+        # Assert
+        detail = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar").workout_detail
+        assert detail.moving_time_seconds == 20, "the skip marker must survive a re-cover"
+        assert detail.average_speed == Decimal("3.2")
+        assert detail.average_cadence == Decimal("86")
+        assert detail.total_elevation_gain == Decimal("125")
+        assert len(detail.segments) == 2
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
     def test_fit_is_not_refetched_on_a_re_cover(
         self,
         mock_download: MagicMock,
@@ -842,7 +878,9 @@ class TestPolarFitIngestion:
         UserConnectionFactory(user=user, provider="polar")
         mock_download.return_value = make_running_fit()
 
-        # Act
+        # Act — a third window proves the skip is stable, not alternating
+        self._save(workouts, db, user.id, sample_polar_exercise)
+        db.flush()
         self._save(workouts, db, user.id, sample_polar_exercise)
         db.flush()
         self._save(workouts, db, user.id, sample_polar_exercise)

@@ -215,6 +215,11 @@ _SESSION_NUMERIC: tuple[tuple[tuple[str, ...], str, float, bool], ...] = (
 )
 
 
+# The EventRecordDetail fields a FIT session can populate. Exposed so callers that skip
+# re-parsing a file still know which stored fields came from it.
+FIT_SESSION_FIELDS: tuple[str, ...] = tuple(dict.fromkeys(key for _, key, _, _ in _SESSION_NUMERIC))
+
+
 def _extract_session_summary(frame: fitdecode.FitDataMessage) -> dict[str, Any]:
     """Whole-workout totals from a FIT ``session`` message, keyed for EventRecordMetrics."""
     summary: dict[str, Any] = {}

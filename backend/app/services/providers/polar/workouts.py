@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from app.config import settings
 from app.constants.workout_types.polar import get_unified_workout_type
 from app.database import DbSession
+from app.models import WorkoutDetails
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -20,7 +21,7 @@ from app.schemas.model_crud.activities import (
 )
 from app.schemas.providers.polar import ExerciseJSON as PolarExerciseJSON
 from app.services.event_record_service import event_record_service
-from app.services.fit_parser import parse_fit_file
+from app.services.fit_parser import FIT_SESSION_FIELDS, parse_fit_file
 from app.services.providers.api_client import download_binary_content
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.timeseries_service import timeseries_service
@@ -230,8 +231,8 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             return 0
         return self._save_bundles(db, user_id, self._build_bundles(self._parse_exercises([raw], user_id), user_id))
 
-    def _fit_already_ingested(self, db: DbSession, user_id: UUID, exercise_id: str) -> bool:
-        """Whether this exercise's FIT file was already folded into the stored workout.
+    def _stored_fit_detail(self, db: DbSession, user_id: UUID, exercise_id: str) -> WorkoutDetails | None:
+        """The stored detail for this exercise if its FIT file was already folded in.
 
         Every FIT ``session`` message carries ``total_timer_time`` and the Polar exercise
         JSON has no equivalent, so ``moving_time_seconds`` is the marker that the file was
@@ -241,7 +242,26 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         next re-cover, which is what backfills them.
         """
         existing = self.workout_repo.get_by_external_id(db, user_id, exercise_id, provider=self.provider_name)
-        return bool(existing and existing.workout_detail and existing.workout_detail.moving_time_seconds is not None)
+        if existing is None:
+            return None
+        detail = existing.workout_detail
+        if detail is None or detail.moving_time_seconds is None:
+            return None
+        return detail
+
+    @staticmethod
+    def _carry_over_fit_fields(stored: WorkoutDetails, detail: EventRecordDetailCreate) -> None:
+        """Copy already-parsed FIT values onto the detail this sync is about to write.
+
+        The detail upsert writes every column, so a detail rebuilt from the JSON alone
+        would null out everything the FIT contributed -- including moving_time_seconds,
+        the marker the skip decision is based on. That made the guard erase its own
+        evidence: the file was re-downloaded on the next window, stored, erased again,
+        and the workout carried its FIT metrics only half the time.
+        """
+        for field in (*FIT_SESSION_FIELDS, "segments", "hr_zones", "power_zones"):
+            if getattr(detail, field, None) is None:
+                setattr(detail, field, getattr(stored, field, None))
 
     def _fetch_fit(self, db: DbSession, user_id: UUID, exercise_id: str) -> bytes | None:
         """Download an exercise's FIT file, or None when Polar has none for it."""
@@ -307,7 +327,9 @@ class PolarWorkouts(BaseWorkoutsTemplate):
 
         Returns the number of samples written.
         """
-        if self._fit_already_ingested(db, user_id, raw_workout.id):
+        stored = self._stored_fit_detail(db, user_id, raw_workout.id)
+        if stored is not None:
+            self._carry_over_fit_fields(stored, detail)
             return 0
 
         fit_bytes = self._fetch_fit(db, user_id, raw_workout.id)
