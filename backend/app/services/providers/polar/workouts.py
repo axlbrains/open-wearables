@@ -79,10 +79,18 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         start_time_utc_offset: int,
         duration: str,
     ) -> tuple[datetime, datetime]:
-        """Extract start and end dates from timestamps with UTC offset."""
-        start_date = isodate.parse_datetime(start_time)
+        """Convert Polar's local wall-clock start into the UTC instant it happened at.
+
+        ``start_time`` is naive LOCAL time and ``start_time_utc_offset`` is that local
+        zone's offset in minutes, so UTC is local MINUS the offset. Adding it instead put
+        every exercise ``2 x offset`` into the future -- four hours in summer -- which is
+        why a workout's own FIT samples, whose timestamps are true UTC, never fell inside its
+        window. Verified against Polar for exercise Pvkk9DWJ: start_time 09:20:47 with
+        offset 120 is 07:20:47 UTC, and its first FIT sample is 07:20:48.
+        """
+        local_start = isodate.parse_datetime(start_time)
         offset = timedelta(minutes=start_time_utc_offset)
-        start_date = start_date + offset
+        start_date = local_start - offset
         duration_td = isodate.parse_duration(duration)
         end_date = start_date + duration_td
         return start_date, end_date

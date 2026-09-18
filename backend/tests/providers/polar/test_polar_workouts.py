@@ -93,10 +93,10 @@ class TestPolarWorkoutsDateExtraction:
             duration="PT1H0M0S",  # 1 hour
         )
 
-        # Assert
-        assert isinstance(start_date, datetime)
-        assert isinstance(end_date, datetime)
-        assert end_date > start_date
+        # Assert — 08:00 local at +1 is 07:00 UTC. Only the duration used to be asserted
+        # here, which is why the sign could be wrong for as long as it was.
+        assert start_date == datetime(2024, 1, 15, 7, 0, 0)
+        assert end_date == datetime(2024, 1, 15, 8, 0, 0)
         assert (end_date - start_date).total_seconds() == 3600  # 1 hour
 
     def test_extract_dates_with_offset_negative_offset(self, db: Session) -> None:
@@ -132,9 +132,9 @@ class TestPolarWorkoutsDateExtraction:
             duration="PT30M0S",  # 30 minutes
         )
 
-        # Assert
-        assert isinstance(start_date, datetime)
-        assert isinstance(end_date, datetime)
+        # Assert — 08:00 local at -5 is 13:00 UTC
+        assert start_date == datetime(2024, 1, 15, 13, 0, 0)
+        assert end_date == datetime(2024, 1, 15, 13, 30, 0)
         assert (end_date - start_date).total_seconds() == 1800  # 30 minutes
 
     def test_extract_dates_not_implemented_fallback(self, db: Session) -> None:
@@ -795,6 +795,52 @@ class TestPolarFitIngestion:
         detail = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar").workout_detail
         assert len(detail.segments) == 2
         assert all(seg["kind"] == "lap" for seg in detail.segments)
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_samples_land_inside_their_own_workout_window(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        """The reason the offset sign mattered.
+
+        FIT sample timestamps are true UTC. While the exercise start was stored as local
+        PLUS the offset, it sat 2 x offset in the future and no sample ever fell inside
+        the workout it belonged to -- four hours out in summer, for every Polar workout.
+        """
+        # Arrange
+        from app.models import DataPointSeries, DataSource
+        from tests.fixtures.fit_builder import make_running_fit
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        # The synthetic FIT records run from 2025-06-01T08:00:00Z.
+        raw = {**sample_polar_exercise, "start_time": "2025-06-01T10:00:00", "start_time_utc_offset": 120}
+        mock_download.return_value = make_running_fit()
+
+        # Act
+        with patch("app.services.providers.polar.workouts.settings.ingest_workout_samples", True):
+            self._save(workouts, db, user.id, raw)
+        db.flush()
+
+        # Assert
+        record = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar")
+        assert record.start_datetime.replace(tzinfo=None) == datetime(2025, 6, 1, 8, 0, 0), (
+            "10:00 local at +2 is 08:00 UTC"
+        )
+        inside = (
+            db.query(DataPointSeries)
+            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            .filter(
+                DataSource.user_id == user.id,
+                DataPointSeries.recorded_at >= record.start_datetime,
+                DataPointSeries.recorded_at < record.end_datetime,
+            )
+            .count()
+        )
+        assert inside > 0, "a workout's own samples must fall inside its window"
 
     @patch("app.services.providers.polar.workouts.download_binary_content")
     def test_samples_are_persisted(
