@@ -469,3 +469,32 @@ class TestManualActivityWithoutStreams:
             mock_service.create.return_value = MagicMock(id=uuid4())
             strava_workouts.process_push_activity(db=MagicMock(), activity=_SAMPLE_ACTIVITY, user_id=uuid4())
         mock_schedule.assert_not_called()
+
+
+class TestManualActivityIsQuiet:
+    """The case KaliszS traced when closing the-momentum#1575.
+
+    A manual activity has no streams and Strava answers /streams with 404. The workouts
+    code already treats that as "no samples", but the api_client logged it at error
+    level first — before the exception ever reached Strava — so the caller could not
+    say it was expected. The streams call now names 404 as a status it handles.
+    """
+
+    def test_streams_call_names_404_as_expected(self, strava_workouts: StravaWorkouts) -> None:
+        # Act
+        with patch.object(strava_workouts, "_make_api_request", return_value={}) as mock_api:
+            strava_workouts._build_workout_samples(MagicMock(), uuid4(), "123", _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+
+        # Assert
+        assert mock_api.call_args.kwargs.get("quiet_statuses") == (404,)
+
+    def test_the_404_reaches_api_client_as_quiet(self, strava_workouts: StravaWorkouts) -> None:
+        """End to end through the real template: the base forwards it, not just accepts it."""
+        # Act
+        with patch(
+            "app.services.providers.templates.base_workouts.make_authenticated_request", return_value={}
+        ) as mock_request:
+            strava_workouts._build_workout_samples(MagicMock(), uuid4(), "123", _START_DT, _ZONE_OFFSET, _DEVICE_MODEL)
+
+        # Assert
+        assert mock_request.call_args.kwargs.get("quiet_statuses") == (404,)

@@ -60,8 +60,14 @@ class HevyWorkouts(BaseWorkoutsTemplate):
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         json_data: dict[str, Any] | None = None,
+        *,
+        quiet_statuses: tuple[int, ...] = (),  # noqa: ARG002
     ) -> Any:
         """Request with the user's stored API key; 401 marks the connection revoked.
+
+        ``quiet_statuses`` is accepted to keep this substitutable for the base
+        template, but has nothing to act on: this path calls httpx directly and never
+        goes through the api_client's error logging it exists to suppress.
 
         Bypasses make_authenticated_request: there is no Bearer token and no
         refresh flow — a rejected key can only be replaced by the user
