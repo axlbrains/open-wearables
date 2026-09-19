@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -5,8 +6,8 @@ import fitdecode
 import pytest
 
 from app.schemas.enums.series_types import SeriesType
-from app.services.fit_parser import FitParseResult, parse_fit_file
-from tests.fixtures.fit_builder import make_cycling_fit, make_running_fit, make_swimming_fit
+from app.services.fit_parser import FitParseResult, estimate_steps, parse_fit_file
+from tests.fixtures.fit_builder import SPORT_CYCLING, make_cycling_fit, make_running_fit, make_swimming_fit
 
 USER_ID = uuid4()
 DS_ID = uuid4()
@@ -183,3 +184,67 @@ class TestSessionSummary:
     def test_no_session_message_yields_empty_summary(self, cycling: FitParseResult) -> None:
         """A file without a session rollup must not invent one."""
         assert cycling.session == {}
+
+
+class TestSessionFieldsFromSamples:
+    """Fill session fields a device leaves out, from the samples it did record.
+
+    Polar writes altitude on every record but no min/max in the session, and no step
+    total at all. The device's own session figure always wins where it exists.
+    """
+
+    def test_device_altitude_span_wins_over_samples(self, running: FitParseResult) -> None:
+        # The fixture's session says 180-260 m; its samples are a flat 200 m.
+        assert running.session["elev_low"] == Decimal("180.0")
+        assert running.session["elev_high"] == Decimal("260.0")
+
+    def test_altitude_span_comes_from_samples_when_the_session_has_none(self) -> None:
+        # Act
+        result = parse_fit_file(make_running_fit(session_altitude=False), USER_ID, DS_ID)
+
+        # Assert
+        assert result.session["elev_low"] == Decimal("200.0")
+        assert result.session["elev_high"] == Decimal("200.0")
+
+    def test_steps_are_estimated_from_per_foot_cadence(self) -> None:
+        # 85 strides/min for the 19 s between 20 one-second records, two feet per stride.
+        result = parse_fit_file(make_running_fit(session_altitude=False), USER_ID, DS_ID)
+        assert result.session["steps_count"] == round(85 * 19 / 60 * 2)
+
+    def test_no_steps_for_cycling(self) -> None:
+        """Cycling cadence is pedal rpm, and a step count from it would be nonsense."""
+        result = parse_fit_file(make_running_fit(sport=SPORT_CYCLING), USER_ID, DS_ID)
+        assert "steps_count" not in result.session
+
+    def test_nothing_is_derived_without_a_session(self, cycling: FitParseResult) -> None:
+        """An empty session keeps meaning 'the file had no rollup'."""
+        assert cycling.session == {}
+
+
+class TestEstimateSteps:
+    _T0 = datetime(2026, 9, 19, 8, 0, 0, tzinfo=timezone.utc)
+
+    def _series(self, *gaps: int, rate: int = 80) -> list[tuple[datetime, Decimal]]:
+        points, t = [(self._T0, Decimal(rate))], self._T0
+        for gap in gaps:
+            t += timedelta(seconds=gap)
+            points.append((t, Decimal(rate)))
+        return points
+
+    def test_integrates_over_the_real_sampling_interval(self) -> None:
+        """Smart recording writes every few seconds; the time between points counts."""
+        one_hz = estimate_steps(self._series(*([1] * 60)))
+        every_4s = estimate_steps(self._series(*([4] * 15)))
+        assert one_hz == every_4s == 160  # 80 strides/min for a minute, two feet each
+
+    def test_a_pause_adds_no_steps(self) -> None:
+        """Auto-pause writes nothing, so a long gap is stopped time.
+
+        Integrating across it would count ten minutes of running that never happened.
+        """
+        with_pause = estimate_steps(self._series(*([1] * 30), 600, *([1] * 30)))
+        without = estimate_steps(self._series(*([1] * 60)))
+        assert with_pause == without
+
+    def test_too_few_samples(self) -> None:
+        assert estimate_steps([(self._T0, Decimal(80))]) is None

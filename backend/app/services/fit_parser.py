@@ -2,7 +2,7 @@
 
 import io
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -87,6 +87,7 @@ def parse_fit_file(
     result = FitParseResult()
     dev_fields_seen: set[str] = set()
     _seg_counters: dict[str, int] = {k: 0 for k in _SEGMENT_KINDS}
+    sport: str | None = None
 
     with fitdecode.FitReader(io.BytesIO(data)) as fit:
         for frame in fit:
@@ -129,6 +130,7 @@ def parse_fit_file(
                 # the workout record itself was built from, so later legs are skipped
                 # rather than silently overwriting it.
                 result.session = _extract_session_summary(frame)
+                sport = _as_sport(_field_val(frame, "sport"))
 
             elif frame.name in _SEGMENT_KINDS:
                 numeric, enums = _SEGMENT_KINDS[frame.name]
@@ -138,6 +140,8 @@ def parse_fit_file(
                     result.segments.append(seg)
                 _seg_counters[frame.name] = idx + 1
 
+    if result.session:
+        _fill_session_from_samples(result, sport)
     result.developer_fields_found = sorted(dev_fields_seen)
     logger.debug(
         "FIT parsed: %d samples, %d segments, dev_fields=%s",
@@ -146,6 +150,68 @@ def parse_fit_file(
         result.developer_fields_found or "none",
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Session fields derived from the per-sample records
+#
+# Some devices record a series every second but leave its rollup out of the
+# session message: Polar writes altitude on every record yet no min/max, and no
+# step total at all. Those are derived here from the samples already parsed, and
+# only where the session itself is silent, so a device's own figure always wins.
+# ---------------------------------------------------------------------------
+
+# FIT cadence for these sports counts one foot (strides per minute), so a step
+# rate is twice it. For cycling it is pedal rpm and steps would be meaningless.
+_ON_FOOT_SPORTS = frozenset({"running", "walking", "hiking"})
+# A longer gap between cadence samples is a pause (auto-pause writes nothing), not
+# time spent moving, so it is not integrated.
+_MAX_CADENCE_GAP_SECONDS = 10
+
+
+def elevation_range(elevations: Sequence[Decimal | float]) -> tuple[Decimal, Decimal] | None:
+    """(lowest, highest) of a workout's elevation samples, or None without any."""
+    if not elevations:
+        return None
+    return Decimal(str(min(elevations))), Decimal(str(max(elevations)))
+
+
+def estimate_steps(cadence: Sequence[tuple[datetime, Decimal | float]]) -> int | None:
+    """Step count from per-foot cadence samples, integrated over the time between them.
+
+    An estimate, not a pedometer count: it is exact only if cadence is steady within
+    each sampling interval. At 1 Hz that is close; on real runs it gives a stride of
+    0.9-1.1 m against the recorded distance.
+    """
+    if len(cadence) < 2:
+        return None
+    points = sorted(cadence)
+    strides = 0.0
+    for (t0, rate), (t1, _) in zip(points, points[1:]):
+        gap = (t1 - t0).total_seconds()
+        if 0 < gap <= _MAX_CADENCE_GAP_SECONDS:
+            strides += float(rate) * gap / 60
+    return round(strides * 2) or None
+
+
+def _as_sport(value: Any) -> str | None:
+    return str(value).lower() if value is not None else None
+
+
+def _fill_session_from_samples(result: FitParseResult, sport: str | None) -> None:
+    if "elev_high" not in result.session or "elev_low" not in result.session:
+        span = elevation_range([s.value for s in result.samples if s.series_type == SeriesType.elevation])
+        if span is not None:
+            low, high = span
+            result.session.setdefault("elev_low", low)
+            result.session.setdefault("elev_high", high)
+
+    if "steps_count" not in result.session and sport in _ON_FOOT_SPORTS:
+        steps = estimate_steps(
+            [(s.recorded_at, s.value) for s in result.samples if s.series_type == SeriesType.cadence]
+        )
+        if steps is not None:
+            result.session["steps_count"] = steps
 
 
 # ---------------------------------------------------------------------------

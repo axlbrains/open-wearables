@@ -1,6 +1,6 @@
 [project]
 name = "open-wearables"
-version = "0.9.9"
+version = "0.9.10"
 description = ""
 requires-python = ">=3.13"
 dependencies = [

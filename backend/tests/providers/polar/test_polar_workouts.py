@@ -909,6 +909,38 @@ class TestPolarFitIngestion:
         assert len(detail.segments) == 2
 
     @patch("app.services.providers.polar.workouts.download_binary_content")
+    def test_altitude_span_and_steps_come_from_samples(
+        self,
+        mock_download: MagicMock,
+        workouts: PolarWorkouts,
+        db: Session,
+        sample_polar_exercise: dict,
+    ) -> None:
+        """Polar's FIT has altitude and cadence per record but neither rollup in its session.
+
+        Both survive a re-cover too: the skip carries them over like any FIT field.
+        """
+        # Arrange
+        from tests.fixtures.fit_builder import make_running_fit
+
+        user = UserFactory()
+        UserConnectionFactory(user=user, provider="polar")
+        mock_download.return_value = make_running_fit(session_altitude=False)
+
+        # Act
+        self._save(workouts, db, user.id, sample_polar_exercise)
+        db.flush()
+        self._save(workouts, db, user.id, sample_polar_exercise)
+        db.flush()
+
+        # Assert
+        detail = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar").workout_detail
+        assert detail.elev_low == Decimal("200")
+        assert detail.elev_high == Decimal("200")
+        assert detail.steps_count == round(85 * 19 / 60 * 2)
+        assert mock_download.call_count == 1
+
+    @patch("app.services.providers.polar.workouts.download_binary_content")
     def test_fit_is_not_refetched_on_a_re_cover(
         self,
         mock_download: MagicMock,

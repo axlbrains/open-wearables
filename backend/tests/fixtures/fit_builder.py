@@ -27,6 +27,7 @@ from typing import NamedTuple
 _FIT_EPOCH_UNIX: int = 631065600
 
 # Base type byte values used in definition messages
+_ENUM: int = 0x00
 _SINT8: int = 0x01
 _UINT8: int = 0x02
 _UINT16: int = 0x84
@@ -174,29 +175,47 @@ def _lap_messages(laps: list[tuple[int, int, int, int, int, int]]) -> bytes:
     return out
 
 
-def _session_message(end_ts: int, elapsed_s: int, distance_m: int) -> bytes:
-    """Whole-workout rollup (local_type=2, global=18) with the values the parser maps."""
-    return _definition_msg(_SESSION_FIELDS, local_type=2, global_num=18) + _data_msg(
-        _SESSION_FIELDS,
-        [
-            end_ts,
-            elapsed_s * 1000,
-            elapsed_s * 1000,  # total_timer_time
-            distance_m * 100,
-            320,  # total_calories: 320 kcal
-            3200,  # avg_speed: 3.2 m/s
-            4100,  # max_speed: 4.1 m/s
-            154,  # avg_heart_rate
-            168,  # max_heart_rate
-            86,  # avg_cadence
-            245,  # avg_power
-            310,  # max_power
-            125,  # total_ascent: 125 m
-            int((260.0 + 500) * 5),  # max_altitude: 260 m
-            int((180.0 + 500) * 5),  # min_altitude: 180 m
-        ],
-        local_type=2,
-    )
+# FIT sport enum values used by the fixtures.
+SPORT_RUNNING = 1
+SPORT_CYCLING = 2
+
+
+def _session_message(
+    end_ts: int,
+    elapsed_s: int,
+    distance_m: int,
+    *,
+    sport: int = SPORT_RUNNING,
+    with_altitude: bool = True,
+) -> bytes:
+    """Whole-workout rollup (local_type=2, global=18) with the values the parser maps.
+
+    ``with_altitude=False`` drops min/max altitude from the rollup, which is how Polar
+    writes it: altitude on every record, but no span in the session.
+    """
+    fields = list(_SESSION_FIELDS)
+    values = [
+        end_ts,
+        elapsed_s * 1000,
+        elapsed_s * 1000,  # total_timer_time
+        distance_m * 100,
+        320,  # total_calories: 320 kcal
+        3200,  # avg_speed: 3.2 m/s
+        4100,  # max_speed: 4.1 m/s
+        154,  # avg_heart_rate
+        168,  # max_heart_rate
+        86,  # avg_cadence
+        245,  # avg_power
+        310,  # max_power
+        125,  # total_ascent: 125 m
+        int((260.0 + 500) * 5),  # max_altitude: 260 m
+        int((180.0 + 500) * 5),  # min_altitude: 180 m
+    ]
+    if not with_altitude:
+        fields, values = fields[:-2], values[:-2]
+    fields.append(_Field(5, _ENUM, 1))  # sport
+    values.append(sport)
+    return _definition_msg(fields, local_type=2, global_num=18) + _data_msg(fields, values, local_type=2)
 
 
 def _fit_file(messages: bytes) -> bytes:
@@ -213,7 +232,12 @@ def _fit_file(messages: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def make_running_fit(n_records: int = 20) -> bytes:
+def make_running_fit(
+    n_records: int = 20,
+    *,
+    sport: int = SPORT_RUNNING,
+    session_altitude: bool = True,
+) -> bytes:
     """Synthetic running activity: full sensor set including GPS, running dynamics, and 2 laps."""
     lat = int(50.0 * _DEG_TO_SEMICIRCLES)  # 50°N
     lon = int(20.0 * _DEG_TO_SEMICIRCLES)  # 20°E
@@ -263,7 +287,9 @@ def make_running_fit(n_records: int = 20) -> bytes:
             (start_ts + half, start_ts + n_records, half, half * 3, 156, 164),  # lap 1
         ]
     )
-    messages += _session_message(start_ts + n_records, n_records, n_records * 3)
+    messages += _session_message(
+        start_ts + n_records, n_records, n_records * 3, sport=sport, with_altitude=session_altitude
+    )
     return _fit_file(messages)
 
 
