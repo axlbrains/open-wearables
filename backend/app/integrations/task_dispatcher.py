@@ -52,6 +52,7 @@ class RegisteredTask(str, Enum):
     VACUUM_KV_EXPIRED = "vacuum_kv_expired"
     CLOSE_STALE_SYNC_RUNS = "close_stale_sync_runs"
     RENEW_OURA_WEBHOOKS = "renew_oura_webhooks"
+    RECONCILE_PROVIDER_WEBHOOKS = "reconcile_provider_webhooks"
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,14 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
     RegisteredTask.RENEW_OURA_WEBHOOKS: TaskDefinition(
         task_name="app.integrations.celery.tasks.renew_oura_webhooks_task.renew_oura_webhooks",
         callable_path="app.integrations.celery.tasks.renew_oura_webhooks_task.renew_oura_webhooks",
+    ),
+    # Upstream dispatches this one with a raw celery send_task; prod has no broker,
+    # so it goes through the dispatcher like every other request-path task. There is
+    # no webhook_sync Cloud Tasks queue, hence the default one.
+    RegisteredTask.RECONCILE_PROVIDER_WEBHOOKS: TaskDefinition(
+        task_name="app.integrations.celery.tasks.provider_webhooks_task.reconcile_provider_webhooks",
+        callable_path="app.integrations.celery.tasks.provider_webhooks_task.reconcile_provider_webhooks",
+        celery_queue="webhook_sync",
     ),
 }
 

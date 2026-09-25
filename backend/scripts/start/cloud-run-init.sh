@@ -33,6 +33,10 @@ echo 'Running Ultrahuman body_temperature->skin_temperature relabel...'
 /opt/venv/bin/python scripts/data_migrations/relabel_ultrahuman_body_temp_to_skin_temp.py \
     || echo "Warning: Ultrahuman temperature relabel failed — will retry on next run."
 
+echo 'Running Ultrahuman HRV SDNN->RMSSD relabel...'
+/opt/venv/bin/python scripts/data_migrations/relabel_ultrahuman_hrv_sdnn_to_rmssd.py \
+    || echo "Warning: Ultrahuman HRV relabel failed — will retry on next run."
+
 echo 'Running Whoop strain event_record backfill...'
 /opt/venv/bin/python scripts/data_migrations/backfill_whoop_strain_event_record.py \
     || echo "Warning: Whoop strain backfill failed — will retry on next run."

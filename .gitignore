@@ -186,5 +186,8 @@ terraform.tfvars
 *.auto.tfvars
 tfplan-*
 
+# Exception: generated OpenAPI spec that feeds the docs API Reference
+!docs/openapi.json
+
 # Exception: AI tool configs that should be tracked
 !.gemini/settings.json
