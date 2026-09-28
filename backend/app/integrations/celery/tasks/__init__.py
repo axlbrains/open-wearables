@@ -41,6 +41,7 @@ from .seed_data_task import generate_seed_data
 from .send_email_task import send_invitation_email_task
 from .strava_stream_retry_task import retry_strava_stream_ingest
 from .sync_vendor_data_task import sync_vendor_data
+from .telemetry_task import send_telemetry_ping
 from .webhook_push_task import process_webhook_push
 from .withings.notify_sync_task import sync_user_subscriptions as sync_withings_user_subscriptions
 
@@ -81,6 +82,7 @@ __all__ = [
     "sync_withings_user_subscriptions",
     "renew_oura_webhooks",
     "vacuum_kv_expired",
+    "send_telemetry_ping",
     # Outgoing webhooks
     "emit_webhook_event",
 ]
