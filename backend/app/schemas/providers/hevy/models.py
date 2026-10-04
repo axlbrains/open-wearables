@@ -104,5 +104,11 @@ class HevyUserInfo(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str
+    username: str | None = None
     name: str | None = None
     url: str | None = None
+
+    @property
+    def display_name(self) -> str | None:
+        """The Hevy handle when present (unique, stable), else the free-text name."""
+        return self.username or self.name

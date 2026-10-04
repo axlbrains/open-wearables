@@ -93,7 +93,10 @@ class HevyStrategy(BaseProviderStrategy):
         response.raise_for_status()
         try:
             payload = response.json()
-            user_info = HevyUserInfo.model_validate(payload.get("user_info") or payload)
+            # The live API wraps the user in {"data": {...}}; accept the bare and
+            # "user_info" shapes too, so a docs-vs-API mismatch can't block connecting.
+            body = payload.get("data") or payload.get("user_info") or payload
+            user_info = HevyUserInfo.model_validate(body)
         except (ValueError, ValidationError) as e:
             raise InvalidApiKeyError(f"Unexpected Hevy user info response: {e}") from e
 
@@ -106,8 +109,8 @@ class HevyStrategy(BaseProviderStrategy):
             existing.token_expires_at = None
             if not existing.provider_user_id:
                 existing.provider_user_id = user_info.id
-            if user_info.name and not existing.provider_username:
-                existing.provider_username = user_info.name
+            if user_info.display_name and not existing.provider_username:
+                existing.provider_username = user_info.display_name
             existing.status = ConnectionStatus.ACTIVE
             existing.updated_at = datetime.now(timezone.utc)
             db.add(existing)
@@ -129,7 +132,7 @@ class HevyStrategy(BaseProviderStrategy):
                 user_id=user_id,
                 provider=self.name,
                 provider_user_id=user_info.id,
-                provider_username=user_info.name,
+                provider_username=user_info.display_name,
                 access_token=api_key,
                 refresh_token=None,
                 token_expires_at=None,

@@ -20,6 +20,33 @@ def _mock_user_info_response(status_code: int = 200) -> MagicMock:
 
 
 class TestHevyApiKeyConnect:
+    def test_connect_accepts_the_live_data_envelope(self, client: TestClient, db: Session) -> None:
+        """The live API wraps the user in {"data": {...}} and adds a username (seen 2026-10-04)."""
+        user = UserFactory()
+        headers = api_key_headers(ApiKeyFactory().plain_key)
+        live = MagicMock(status_code=200)
+        live.json.return_value = {
+            "data": {
+                "id": "hevy-user-9",
+                "username": "jdoe",
+                "name": "John Doe",
+                "url": "https://hevy.com/user/jdoe",
+                "weight_unit": "kg",
+                "distance_unit": "kilometers",
+            }
+        }
+
+        with patch("app.services.providers.hevy.strategy.httpx.get", return_value=live):
+            response = client.post(
+                f"/api/v1/users/{user.id}/connections/hevy",
+                json={"api_key": HEVY_KEY},
+                headers=headers,
+            )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["provider_user_id"] == "hevy-user-9"
+        assert response.json()["provider_username"] == "jdoe"
+
     def test_connect_creates_connection(self, client: TestClient, db: Session) -> None:
         user = UserFactory()
         headers = api_key_headers(ApiKeyFactory().plain_key)
