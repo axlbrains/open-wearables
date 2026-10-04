@@ -3,6 +3,9 @@ import { API_ENDPOINTS } from '../config';
 
 export interface AppConfig {
   outgoing_webhooks_enabled: boolean;
+  // Optional: backends released before this flag don't send it.
+  data_lifecycle_enabled?: boolean;
+  email_enabled: boolean;
 }
 
 export const configService = {

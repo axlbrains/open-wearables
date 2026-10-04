@@ -40,3 +40,12 @@ echo 'Running Ultrahuman HRV SDNN->RMSSD relabel...'
 echo 'Running Whoop strain event_record backfill...'
 /opt/venv/bin/python scripts/data_migrations/backfill_whoop_strain_event_record.py \
     || echo "Warning: Whoop strain backfill failed — will retry on next run."
+
+# Must stay after the strain backfill above (it tells cycle strain from workout strain).
+echo 'Running Whoop cycle day re-key...'
+/opt/venv/bin/python scripts/data_migrations/rekey_whoop_cycle_days.py \
+    || echo "Warning: Whoop cycle re-key failed — will retry on next run."
+
+echo 'Running device type backfill...'
+/opt/venv/bin/python scripts/data_migrations/backfill_device_types.py \
+    || echo "Warning: device type backfill failed — will retry on next run."

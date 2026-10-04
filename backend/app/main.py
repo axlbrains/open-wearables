@@ -22,9 +22,8 @@ from app.middlewares import add_access_log_middleware, add_cors_middleware, add_
 from app.services import raw_payload_storage
 from app.services.endpoint_usage import endpoint_usage
 from app.services.outgoing_webhooks import svix as svix_service
-from app.utils.config_utils import EnvironmentType
 from app.utils.exceptions import DatetimeParseError, handle_exception
-from app.utils.log_filters import UvicornAccess2xxFilter
+from app.utils.logging_setup import configure_logging
 
 # Configure logging to use stdout instead of stderr
 # Some platforms convert stderr logs to level.error automatically, so we must use stdout
@@ -42,16 +41,12 @@ for _name in ("uvicorn", "uvicorn.error"):
     _logger.handlers.clear()
     _logger.propagate = True
 
-# In production, drop happy-path 2xx access lines from uvicorn — they
-# were 88% of GCP log ingest on this project (axlbrains/open-wearables#8).
-# 4xx/5xx pass through unchanged, and dev gets the full firehose still.
-if settings.environment == EnvironmentType.PRODUCTION:
-    logging.getLogger("uvicorn.access").addFilter(UvicornAccess2xxFilter())
-
 # httpx/httpcore log one INFO line per outgoing request; at our request volume that is
 # pure noise (event-type sync, provider calls, webhook delivery). Keep warnings and errors.
 for _name in ("httpx", "httpcore"):
     logging.getLogger(_name).setLevel(logging.WARNING)
+
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +57,8 @@ async def _lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
     # dictConfig that re-creates the logger and undoes an import-time disable. Lifespan
     # runs after it, so add_access_log_middleware stays the single access-log source.
     logging.getLogger("uvicorn.access").disabled = True
+    # The same dictConfig resets the uvicorn loggers, so apply LOG_FORMAT/LOG_LEVEL again.
+    configure_logging()
     svix_service.register_event_types()
     yield
     # Hand the last partial interval of telemetry counters to Redis before exiting.
@@ -69,7 +66,14 @@ async def _lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
         await asyncio.to_thread(endpoint_usage.flush)
 
 
-api = FastAPI(title=settings.api_name, version=settings.app_version, lifespan=_lifespan)
+# FastAPI >= 0.142 turns on its own OpenTelemetry by default (request traces, metrics,
+# exception logs, OTLP exporters from OTEL_* variables). Keep it off: our OTel setup is explicit.
+api = FastAPI(
+    title=settings.api_name,
+    version=settings.app_version,
+    lifespan=_lifespan,
+    telemetry={"auto_configure": False, "tracing": False, "metrics": False, "logs": False},
+)
 celery_app = create_celery()
 init_sentry()
 raw_payload_storage.configure(
@@ -103,6 +107,14 @@ async def root() -> dict[str, str]:
     return {"message": "Server is running!"}
 
 
+def _capture_error_body(request: Request, status_code: int, detail: object) -> None:
+    """Stash a 4xx response body on request.state for the access log (flag-gated, byte-capped)."""
+    if settings.log_error_response_body and 400 <= status_code < 500:
+        # truncate on the byte limit; errors="ignore" drops a partial codepoint at the cut
+        truncated = str(detail).encode("utf-8")[: settings.log_error_response_body_max_bytes]
+        request.state.error_response_body = truncated.decode("utf-8", errors="ignore")
+
+
 @api.get("/health")
 async def health() -> dict[str, str]:
     """Lightweight, unauthenticated health check exposing the real build version.
@@ -111,14 +123,6 @@ async def health() -> dict[str, str]:
     and is consumed by status.axl.coach's per-component version label.
     """
     return {"status": "ok", "version": settings.app_version}
-
-
-def _capture_error_body(request: Request, status_code: int, detail: object) -> None:
-    """Stash a 4xx response body on request.state for the access log (flag-gated, byte-capped)."""
-    if settings.log_error_response_body and 400 <= status_code < 500:
-        # truncate on the byte limit; errors="ignore" drops a partial codepoint at the cut
-        truncated = str(detail).encode("utf-8")[: settings.log_error_response_body_max_bytes]
-        request.state.error_response_body = truncated.decode("utf-8", errors="ignore")
 
 
 @api.exception_handler(RequestValidationError)
@@ -140,22 +144,6 @@ async def datetime_parse_exception_handler(_: Request, exc: DatetimeParseError) 
     raise handle_exception(exc, "")
 
 
-@api.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Log any uncaught exception with a full traceback before returning 500.
-
-    Without this, FastAPI/Starlette turns an uncaught error into a bare 500 with
-    nothing in the application logs, leaving production 5xx (e.g. on
-    GET /users/{id}/connections) impossible to root-cause — see
-    axlbrains/open-wearables#22.
-    """
-    logger.error("Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc)
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "Internal server error"},
-    )
-
-
 @api.exception_handler(StarletteHTTPException)
 async def http_exception_handler_with_body_log(request: Request, exc: StarletteHTTPException) -> Response:
     # request.state survives the middleware boundary, so the access log can read it.
@@ -172,6 +160,22 @@ async def http_exception_handler_with_body_log(request: Request, exc: StarletteH
         except Exception:
             request.state.error_cause_msg = "<unavailable>"
     return await http_exception_handler(request, exc)
+
+
+@api.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Log any uncaught exception with a full traceback before returning 500.
+
+    Without this, FastAPI/Starlette turns an uncaught error into a bare 500 with
+    nothing in the application logs, leaving production 5xx (e.g. on
+    GET /users/{id}/connections) impossible to root-cause — see
+    axlbrains/open-wearables#22.
+    """
+    logger.error("Unhandled exception on %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
+    )
 
 
 api.include_router(head_router)
