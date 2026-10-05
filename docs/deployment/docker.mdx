@@ -158,8 +158,11 @@ The defaults in `.env.example` are development values. Override at least these f
 | `FRONTEND_URL` | public URL of the frontend |
 | `API_BASE_URL` | public URL of the API, used for provider OAuth redirect URIs |
 | `VITE_API_URL` | URL of the API as reached from the browser |
+| `LOG_FORMAT` | `json` if a log collector reads the container output (see [Logs](#logs)) |
 
 `VITE_API_URL` is a frontend variable and is not part of `.env.example`—add it to the same `.env`. For a local trial of this stack, set it to `http://localhost:8000`; in production it is typically the same value as `API_BASE_URL`.
+
+Open Wearables does not use `OTEL_PROPAGATORS`, but FastAPI loads the propagators it lists at startup. If your platform sets it to one that is not installed in the image, such as `b3`, every backend container fails with `ValueError: Propagator b3 not found`. Unset it for these containers.
 
 ### Running it
 
@@ -192,6 +195,34 @@ The defaults in `.env.example` are development values. Override at least these f
 In practice you will put the API and frontend behind a reverse proxy with TLS instead of exposing the container ports directly.
 
 To add Flower, run another backend container with `command: scripts/start/flower.sh` and publish port `5555`. To enable outgoing webhooks, add a `svix-server` service and a `svix` database; the development `docker-compose.yml` shows the wiring.
+
+## Logs
+
+The backend writes its application logs to stdout (in `legacy`, uvicorn's own lines go to stderr, as before). `LOG_FORMAT` selects their format:
+
+| Value | Output |
+|-------|--------|
+| `legacy` (default) | Structured app logs as JSON lines, framework and library logs as plain text (`[time - logger] (LEVEL) message`) |
+| `json` | Every line is one JSON object, for log collectors such as Loki, Datadog, CloudWatch or Azure Monitor |
+| `text` | Readable lines, for local development |
+
+Structured app log lines keep the same fields in `legacy` and `json`: `timestamp`, `level`, `message`, `provider`, then the attributes of the event (`user_id`, `action`, ...). Other lines in `json` carry `timestamp`, `level`, `message`, `logger` and, for errors, `exception`.
+
+`LOG_LEVEL` (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`, case-insensitive) drops log lines below that level, structured app logs included. It cannot lower the level of libraries that are kept quieter on purpose (`httpx` and `httpcore` stay at `WARNING`). When it is not set, other logs start at `INFO` and structured app logs are not filtered.
+
+`LOG_LEVEL` also changes what Sentry sees from standard-library log records (`logger.error(...)` and similar) of app, Celery and uvicorn code: with `CRITICAL`, their errors no longer create Sentry events, and above `INFO` their `INFO` records no longer become breadcrumbs. Libraries with a level of their own (`httpx`, `httpcore`) still report to Sentry as before. `log_structured` lines never reach Sentry, whatever the level, and exceptions captured explicitly (`capture_exception`) or left unhandled always do. `WARN` and `FATAL` are accepted as aliases. Any other value, for example one your platform sets for another tool, is ignored with a warning at startup, as if `LOG_LEVEL` were not set.
+
+<Note>
+  The default will change from `legacy` to `text` in a future release. Set `LOG_FORMAT` explicitly if you depend on the current output.
+</Note>
+
+Output printed outside the logging setup keeps its own format, and some of it goes to stderr:
+
+- startup banners of the FastAPI CLI, Celery workers and Celery beat, and Celery's `worker: Warm shutdown` lines;
+- uvicorn's first lines (`Started server process`, `Waiting for application startup.`) and, with `ENVIRONMENT=local`, its reloader messages;
+- what the start scripts print before the service starts: shell traces, Alembic migrations and the seed scripts;
+- raw payloads printed with `RAW_PAYLOAD_STORAGE=log`, which ignore `LOG_FORMAT` and `LOG_LEVEL`;
+- Python warnings (`warnings.warn`), printed to stderr.
 
 ## Configuring the frontend API URL at runtime
 
