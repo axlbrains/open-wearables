@@ -154,6 +154,7 @@
             "pages": [
               "dev-guides/aws-setup",
               "dev-guides/raw-payload-storage",
+              "dev-guides/log-export",
               "dev-guides/telemetry"
             ]
           },
@@ -240,6 +241,7 @@
             "group": "Summaries",
             "pages": [
               "GET /api/v1/users/{user_id}/summaries/activity",
+              "GET /api/v1/users/{user_id}/summaries/activity/totals",
               "GET /api/v1/users/{user_id}/summaries/sleep",
               "GET /api/v1/users/{user_id}/summaries/body",
               "GET /api/v1/users/{user_id}/summaries/recovery",
@@ -257,8 +259,10 @@
             "group": "Events",
             "pages": [
               "GET /api/v1/users/{user_id}/events/workouts",
+              "GET /api/v1/users/{user_id}/events/workouts/totals",
               "DELETE /api/v1/users/{user_id}/events/workouts/{workout_id}",
               "GET /api/v1/users/{user_id}/events/sleep",
+              "GET /api/v1/users/{user_id}/events/sleep/totals",
               "DELETE /api/v1/users/{user_id}/events/sleep/{sleep_id}"
             ]
           },

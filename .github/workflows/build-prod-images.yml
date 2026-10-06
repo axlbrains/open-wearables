@@ -82,7 +82,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # The frontend bakes the API URL at build time (TanStack Start SSR).
+      # SvelteKit portal: the API URL is read at runtime from VITE_API_URL (Cloud Run env),
+      # so the image carries no build-time API URL.
       - name: Build and push frontend
         if: inputs.images == 'both' || inputs.images == 'frontend'
         uses: docker/build-push-action@v6
@@ -90,7 +91,6 @@ jobs:
           context: frontend
           platforms: linux/amd64
           push: true
-          build-args: VITE_API_URL=https://ow-api.axl.coach
           tags: ${{ env.REPO }}/frontend:${{ inputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
