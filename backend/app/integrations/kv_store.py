@@ -355,23 +355,32 @@ class KvStoreClient:
         return res.rowcount
 
     def eval(self, script: str, numkeys: int, *keys_and_args: Any) -> Any:
-        """Minimal Lua ``EVAL`` shim for the one script the codebase uses.
+        """Minimal Lua ``EVAL`` shim for the lock scripts the codebase uses.
 
-        ``app/services/sync_coordination.py`` releases its primary lock via a
-        compare-and-delete Lua script (``del KEYS[1]`` iff ``get KEYS[1] ==
-        ARGV[1]``) so it never deletes a lock another caller re-acquired. On
-        real Redis that's an atomic ``EVAL``; here we express the same intent
-        as a single atomic Postgres ``DELETE ... WHERE key = k AND value = v``.
+        Two shapes are recognised, each run as one atomic Postgres transaction:
 
-        Only the compare-and-delete shape is recognised — any other script
-        raises so a newly-introduced Lua script fails loudly here instead of
-        silently misbehaving on the KvStore backend.
+        * **compare-and-delete** (``del KEYS[1]`` iff ``get KEYS[1] == ARGV[1]``):
+          lock release in ``sync_coordination``, the Garmin backfill state and
+          ``dashboard_stats_cache``. Returns the number of keys deleted.
+        * **compare-and-renew** (``expire`` iff we still own it, else ``set NX EX``):
+          ``sync_coordination.renew_primary``. Returns 1 if the lease is ours, else 0.
+
+        Matching ignores whitespace and quote style: Lua accepts both ``'...'`` and
+        ``"..."``, and upstream writes both (``dashboard_stats_cache`` uses single
+        quotes, which an exact-text match missed and turned into a NotImplementedError
+        on the first dashboard stats refresh). Anything else still raises, so a new
+        script fails loudly here instead of silently misbehaving on KvStore.
         """
         keys = keys_and_args[:numkeys]
         args = keys_and_args[numkeys:]
-        norm = " ".join(script.split())
-        is_cas_delete = 'redis.call("del"' in norm and 'redis.call("get"' in norm and "ARGV[1]" in norm
-        if is_cas_delete and len(keys) >= 1 and len(args) >= 1:
+        norm = " ".join(script.replace("'", '"').split())
+        owns = 'redis.call("get", KEYS[1]) == ARGV[1]' in norm
+        deletes = 'redis.call("del", KEYS[1])' in norm
+        renews = (
+            'redis.call("expire", KEYS[1], ARGV[2])' in norm
+            and 'redis.call("set", KEYS[1], ARGV[1], "NX", "EX", ARGV[2])' in norm
+        )
+        if owns and deletes and not renews and len(keys) >= 1 and len(args) >= 1:
             with self._engine.begin() as conn:
                 res = conn.execute(
                     text(
@@ -381,6 +390,19 @@ class KvStoreClient:
                     {"k": keys[0], "v": args[0]},
                 )
             return res.rowcount
+        if owns and renews and not deletes and len(keys) >= 1 and len(args) >= 2:
+            ttl = int(args[1])
+            with self._engine.begin() as conn:
+                res = conn.execute(
+                    text(
+                        "UPDATE kv_entry SET expires_at = :e WHERE key = :k AND value = :v "
+                        "AND (expires_at IS NULL OR expires_at > now())"
+                    ),
+                    {"k": keys[0], "v": str(args[0]), "e": _expires_at(ttl)},
+                )
+                if res.rowcount:
+                    return 1
+                return 1 if self._set_conn(conn, keys[0], args[0], ex=ttl, nx=True) else 0
         raise NotImplementedError(f"kv_store.eval: unsupported Lua script (first 80 chars): {norm[:80]!r}")
 
     # ------------------------------------------------------------------
