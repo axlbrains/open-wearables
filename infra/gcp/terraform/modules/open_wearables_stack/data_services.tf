@@ -41,6 +41,9 @@ resource "google_sql_database_instance" "main" {
 
     ip_configuration {
       ipv4_enabled = true
+      # Services reach the DB through the Cloud SQL connector, which is TLS anyway;
+      # this refuses any plaintext connection that does not.
+      ssl_mode = "ENCRYPTED_ONLY"
     }
 
     backup_configuration {
