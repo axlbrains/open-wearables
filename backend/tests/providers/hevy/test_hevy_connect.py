@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -131,6 +132,60 @@ class TestHevyApiKeyConnect:
             .count()
             == 0
         )
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            httpx.ConnectTimeout("timed out"),
+            httpx.ConnectError("connection refused"),
+            httpx.Response(429, request=httpx.Request("GET", "https://api.hevyapp.com/v1/user/info")),
+            httpx.Response(503, request=httpx.Request("GET", "https://api.hevyapp.com/v1/user/info")),
+            httpx.Response(200, text="<html>maintenance</html>"),
+        ],
+        ids=["timeout", "connect-error", "429", "503", "unexpected-body"],
+    )
+    def test_hevy_outage_is_a_502_not_an_invalid_key(
+        self, client: TestClient, db: Session, failure: Exception | httpx.Response
+    ) -> None:
+        user = UserFactory()
+        headers = api_key_headers(ApiKeyFactory().plain_key)
+        mock_kwargs = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+
+        with patch("app.services.providers.hevy.strategy.httpx.get", **mock_kwargs):
+            response = client.post(
+                f"/api/v1/users/{user.id}/connections/hevy", json={"api_key": HEVY_KEY}, headers=headers
+            )
+
+        assert response.status_code == 502, response.text
+        assert "Hevy" in response.json()["detail"]
+        assert (
+            db.query(UserConnection)
+            .filter(UserConnection.user_id == user.id, UserConnection.provider == "hevy")
+            .count()
+            == 0
+        )
+
+    def test_reposting_another_accounts_key_switches_the_identity(self, client: TestClient, db: Session) -> None:
+        user = UserFactory()
+        headers = api_key_headers(ApiKeyFactory().plain_key)
+        other_account = _mock_user_info_response()
+        other_account.json.return_value = {"data": {"id": "hevy-user-2", "username": "jane"}}
+
+        with patch("app.services.providers.hevy.strategy.httpx.get", return_value=_mock_user_info_response()):
+            client.post(f"/api/v1/users/{user.id}/connections/hevy", json={"api_key": HEVY_KEY}, headers=headers)
+        with patch("app.services.providers.hevy.strategy.httpx.get", return_value=other_account):
+            response = client.post(
+                f"/api/v1/users/{user.id}/connections/hevy", json={"api_key": "other-key"}, headers=headers
+            )
+
+        assert response.status_code == 201, response.text
+        connection = (
+            db.query(UserConnection).filter(UserConnection.user_id == user.id, UserConnection.provider == "hevy").one()
+        )
+        db.refresh(connection)
+        assert connection.access_token == "other-key"
+        assert connection.provider_user_id == "hevy-user-2"
+        assert connection.provider_username == "jane"
 
     def test_oauth_provider_rejects_api_key_connect(self, client: TestClient, db: Session) -> None:
         user = UserFactory()

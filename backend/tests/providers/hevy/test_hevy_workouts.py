@@ -10,6 +10,7 @@ import pytest
 
 from app.schemas.auth import ConnectionStatus
 from app.schemas.enums import WorkoutType
+from app.services.providers.base_strategy import IncompleteSyncError
 from app.services.providers.hevy.workouts import HevyWorkouts
 
 API_BASE = "https://api.hevyapp.com"
@@ -117,23 +118,89 @@ class TestGetWorkoutEvents:
         params = mock_request.call_args_list[0].kwargs["params"]
         assert params["since"] == "2026-08-01T00:00:00Z"
 
-    def test_partial_results_on_error(self, workouts: HevyWorkouts) -> None:
+    def test_a_later_page_failure_fails_the_whole_fetch(self, workouts: HevyWorkouts) -> None:
+        """Returning page 1 alone would let the caller advance its cursor past page 2."""
         pages = [
             self._response(1, 3, [{"type": "updated", "workout": _workout_payload()}]),
             RuntimeError("boom"),
+        ]
+        with (
+            patch.object(workouts, "_make_api_request", side_effect=pages),
+            pytest.raises(IncompleteSyncError, match="page 2"),
+        ):
+            workouts.get_workout_events(MagicMock(), uuid4(), since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    def test_error_on_first_page_raises(self, workouts: HevyWorkouts) -> None:
+        with (
+            patch.object(workouts, "_make_api_request", side_effect=RuntimeError("boom")),
+            pytest.raises(IncompleteSyncError),
+        ):
+            workouts.get_workout_events(MagicMock(), uuid4(), since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+
+def _updated(workout_id: str, updated_at: str, title: str = "Push Day") -> dict:
+    return {"type": "updated", "workout": _workout_payload(id=workout_id, updated_at=updated_at, title=title)}
+
+
+def _deleted(workout_id: str, deleted_at: str) -> dict:
+    return {"type": "deleted", "id": workout_id, "deleted_at": deleted_at}
+
+
+class TestLatestEventPerWorkout:
+    """The feed is newest first; only the newest event per workout may be applied."""
+
+    def _fetch(self, workouts: HevyWorkouts, events: list[dict]) -> tuple[list[dict], list[str]]:
+        page = {"page": 1, "page_count": 1, "events": events}
+        with patch.object(workouts, "_make_api_request", return_value=page):
+            return workouts.get_workout_events(MagicMock(), uuid4(), since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    def test_older_delete_does_not_remove_a_newer_update(self, workouts: HevyWorkouts) -> None:
+        updated, deleted = self._fetch(
+            workouts,
+            [_updated("w1", "2026-08-03T10:00:00Z"), _deleted("w1", "2026-08-02T10:00:00Z")],
+        )
+        assert [w["id"] for w in updated] == ["w1"]
+        assert deleted == []
+
+    def test_newer_delete_wins_over_an_older_update(self, workouts: HevyWorkouts) -> None:
+        updated, deleted = self._fetch(
+            workouts,
+            [_deleted("w1", "2026-08-03T10:00:00Z"), _updated("w1", "2026-08-02T10:00:00Z")],
+        )
+        assert updated == []
+        assert deleted == ["w1"]
+
+    def test_only_the_newest_update_is_kept(self, workouts: HevyWorkouts) -> None:
+        updated, _ = self._fetch(
+            workouts,
+            [
+                _updated("w1", "2026-08-03T10:00:00Z", title="Newest"),
+                _updated("w1", "2026-08-02T10:00:00Z", title="Older"),
+                _updated("w2", "2026-08-01T10:00:00Z", title="Other"),
+            ],
+        )
+        assert sorted((w["id"], w["title"]) for w in updated) == [("w1", "Newest"), ("w2", "Other")]
+
+    def test_timestamps_beat_feed_order(self, workouts: HevyWorkouts) -> None:
+        # Should the feed ever come oldest first, the timestamps still decide.
+        updated, deleted = self._fetch(
+            workouts,
+            [_deleted("w1", "2026-08-02T10:00:00Z"), _updated("w1", "2026-08-03T10:00:00Z", title="Newest")],
+        )
+        assert [w["title"] for w in updated] == ["Newest"]
+        assert deleted == []
+
+    def test_events_across_pages_are_collapsed(self, workouts: HevyWorkouts) -> None:
+        pages = [
+            {"page": 1, "page_count": 2, "events": [_updated("w1", "2026-08-03T10:00:00Z")]},
+            {"page": 2, "page_count": 2, "events": [_deleted("w1", "2026-08-02T10:00:00Z")]},
         ]
         with patch.object(workouts, "_make_api_request", side_effect=pages):
             updated, deleted = workouts.get_workout_events(
                 MagicMock(), uuid4(), since=datetime(2026, 8, 1, tzinfo=timezone.utc)
             )
-        assert len(updated) == 1
-
-    def test_error_on_first_page_raises(self, workouts: HevyWorkouts) -> None:
-        with (
-            patch.object(workouts, "_make_api_request", side_effect=RuntimeError("boom")),
-            pytest.raises(RuntimeError),
-        ):
-            workouts.get_workout_events(MagicMock(), uuid4(), since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+        assert [w["id"] for w in updated] == ["w1"]
+        assert deleted == []
 
 
 class TestLoadData:
@@ -145,6 +212,7 @@ class TestLoadData:
                 "get_workout_events",
                 return_value=([_workout_payload()], ["deleted-ext-id"]),
             ),
+            patch.object(workouts, "_stored_workouts", return_value=[]),
             patch("app.services.providers.hevy.workouts.event_record_service") as mock_service,
         ):
             mock_service.create.return_value = MagicMock(id=uuid4())
@@ -167,6 +235,18 @@ class TestLoadData:
             count = workouts.load_data(MagicMock(), uuid4(), start_date="2026-08-01T00:00:00Z")
         assert count == 0
         mock_service.create.assert_not_called()
+
+    def test_a_write_failure_fails_the_sync(self, workouts: HevyWorkouts) -> None:
+        db = MagicMock()
+        with (
+            patch.object(workouts, "get_workout_events", return_value=([_workout_payload()], [])),
+            patch.object(workouts, "_stored_workouts", return_value=[]),
+            patch("app.services.providers.hevy.workouts.event_record_service") as mock_service,
+        ):
+            mock_service.create.side_effect = RuntimeError("db down")
+            with pytest.raises(IncompleteSyncError, match="db down"):
+                workouts.load_data(db, uuid4(), start_date="2026-08-01T00:00:00Z")
+        db.rollback.assert_called_once()
 
 
 class TestApiKeyAuth:
