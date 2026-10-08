@@ -21,10 +21,10 @@ logger = getLogger(__name__)
 
 @shared_task
 def vacuum_kv_expired() -> dict[str, int]:
-    """Remove past-expiry rows from kv_entry / kv_set_member / kv_list_entry."""
+    """Remove past-expiry rows from kv_entry / kv_set_member / kv_list_entry / kv_zset_member."""
     deleted: dict[str, int] = {}
     with engine.begin() as conn:
-        for table in ("kv_entry", "kv_set_member", "kv_list_entry"):
+        for table in ("kv_entry", "kv_set_member", "kv_list_entry", "kv_zset_member"):
             res = conn.execute(text(f"DELETE FROM {table} WHERE expires_at IS NOT NULL AND expires_at < now()"))
             deleted[table] = res.rowcount
     total = sum(deleted.values())

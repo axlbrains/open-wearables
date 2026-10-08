@@ -2,14 +2,16 @@
 
 A drop-in replacement for ``redis.Redis`` covering the subset of commands the
 codebase actually uses: GET/SET/SETEX/EXPIRE/INCR/DELETE/MGET, SADD/SMEMBERS/
-SREM, LPUSH/LRANGE/LTRIM, plus pipeline/lock/scan/pubsub stubs so existing
-call sites work unchanged.
+SREM, LPUSH/LRANGE/LTRIM, ZADD/ZRANGE/ZREVRANGE/ZREM/ZREMRANGEBY{SCORE,RANK}/
+ZCARD/ZSCORE, plus pipeline/lock/scan/pubsub stubs so existing call sites work
+unchanged.
 
-Backed by three tables (see ``alembic`` migration ``kv_store_tables``):
+Backed by four tables (migrations ``kv_store_tables`` and ``kv_zset_member``):
 
 - ``kv_entry``       — string keys with optional ``expires_at``
 - ``kv_set_member``  — set memberships (TTL is per-set; mirrored on each row)
 - ``kv_list_entry``  — list values, total order via ``BIGSERIAL`` id
+- ``kv_zset_member`` — sorted-set members with a float score (TTL per set)
 
 Trade-offs vs real Redis:
 
@@ -313,7 +315,11 @@ class KvStoreClient:
                 text("UPDATE kv_list_entry SET expires_at = :e WHERE list_key = :k"),
                 {"k": key, "e": exp},
             )
-        return updated
+            zres = conn.execute(
+                text("UPDATE kv_zset_member SET expires_at = :e WHERE zset_key = :k"),
+                {"k": key, "e": exp},
+            )
+        return updated or zres.rowcount > 0
 
     def incr(self, key: str) -> int:
         with self._engine.begin() as conn:
@@ -350,6 +356,10 @@ class KvStoreClient:
             )
             conn.execute(
                 text("DELETE FROM kv_list_entry WHERE list_key = ANY(CAST(:keys AS text[]))"),
+                {"keys": keys_list},
+            )
+            conn.execute(
+                text("DELETE FROM kv_zset_member WHERE zset_key = ANY(CAST(:keys AS text[]))"),
                 {"keys": keys_list},
             )
         return res.rowcount
@@ -506,6 +516,174 @@ class KvStoreClient:
                 {"lk": list_key, "keep": keep},
             )
         return True
+
+    # ------------------------------------------------------------------
+    # Sorted sets — sync_status_service indexes sync runs by timestamp.
+    # Order is (score, member) ascending, as in Redis; ZREV* reverses both.
+    # ------------------------------------------------------------------
+
+    _ZSET_LIVE = "zset_key = :zk AND (expires_at IS NULL OR expires_at > now())"
+
+    def zadd(
+        self,
+        name: str,
+        mapping: dict[str, float],
+        nx: bool = False,
+        xx: bool = False,
+        **_kwargs: Any,
+    ) -> int:
+        """Add or update members. Returns how many members were new, like Redis."""
+        if not mapping:
+            return 0
+        if nx and xx:
+            raise ValueError("ZADD allows either 'nx' or 'xx', not both")
+        with self._engine.begin() as conn:
+            # Expired members are gone as far as Redis is concerned; clear them so a
+            # re-added member counts as new and does not keep a dead expiry.
+            conn.execute(
+                text(
+                    "DELETE FROM kv_zset_member WHERE zset_key = :zk AND expires_at IS NOT NULL AND expires_at <= now()"
+                ),
+                {"zk": name},
+            )
+            # A new member joins the set's existing TTL.
+            ttl_row = conn.execute(
+                text("SELECT max(expires_at) FROM kv_zset_member WHERE zset_key = :zk"),
+                {"zk": name},
+            ).first()
+            expires_at = ttl_row[0] if ttl_row else None
+            added = 0
+            for member, score in mapping.items():
+                params = {"zk": name, "m": str(member), "s": float(score), "e": expires_at}
+                if xx:
+                    conn.execute(
+                        text("UPDATE kv_zset_member SET score = :s WHERE zset_key = :zk AND member = :m"),
+                        params,
+                    )
+                    continue
+                on_conflict = "DO NOTHING" if nx else "DO UPDATE SET score = EXCLUDED.score"
+                row = conn.execute(
+                    text(
+                        "INSERT INTO kv_zset_member (zset_key, member, score, expires_at) "
+                        "VALUES (:zk, :m, :s, :e) "
+                        f"ON CONFLICT (zset_key, member) {on_conflict} "
+                        "RETURNING (xmax = 0) AS inserted"
+                    ),
+                    params,
+                ).first()
+                if row is not None and row[0]:
+                    added += 1
+        return added
+
+    def zcard(self, name: str) -> int:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(f"SELECT count(*) FROM kv_zset_member WHERE {self._ZSET_LIVE}"), {"zk": name}
+            ).first()
+        return int(row[0]) if row else 0
+
+    def zscore(self, name: str, member: str) -> float | None:
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                text(f"SELECT score FROM kv_zset_member WHERE {self._ZSET_LIVE} AND member = :m"),
+                {"zk": name, "m": str(member)},
+            ).first()
+        return float(row[0]) if row else None
+
+    def zrem(self, name: str, *members: str) -> int:
+        if not members:
+            return 0
+        with self._engine.begin() as conn:
+            res = conn.execute(
+                text(f"DELETE FROM kv_zset_member WHERE {self._ZSET_LIVE} AND member = ANY(CAST(:m AS text[]))"),
+                {"zk": name, "m": [str(m) for m in members]},
+            )
+        return res.rowcount
+
+    def _zrank_window(self, conn: Connection, name: str, start: int, end: int) -> tuple[int, int] | None:
+        """Resolve Redis rank indexes (negative = from the end) to an OFFSET/LIMIT pair."""
+        if start < 0 or end < 0:
+            row = conn.execute(
+                text(f"SELECT count(*) FROM kv_zset_member WHERE {self._ZSET_LIVE}"), {"zk": name}
+            ).first()
+            size = int(row[0]) if row else 0
+            if start < 0:
+                start = max(0, size + start)
+            if end < 0:
+                end = size + end
+        if end < start:
+            return None
+        return start, end - start + 1
+
+    def zrange(
+        self,
+        name: str,
+        start: int,
+        end: int,
+        desc: bool = False,
+        withscores: bool = False,
+        **_kwargs: Any,
+    ) -> list[Any]:
+        order = "score DESC, member DESC" if desc else "score ASC, member ASC"
+        with self._engine.connect() as conn:
+            window = self._zrank_window(conn, name, start, end)
+            if window is None:
+                return []
+            offset, limit = window
+            rows = conn.execute(
+                text(
+                    f"SELECT member, score FROM kv_zset_member WHERE {self._ZSET_LIVE} "
+                    f"ORDER BY {order} OFFSET :offset LIMIT :limit"
+                ),
+                {"zk": name, "offset": offset, "limit": limit},
+            ).fetchall()
+        if withscores:
+            return [(r[0], float(r[1])) for r in rows]
+        return [r[0] for r in rows]
+
+    def zrevrange(self, name: str, start: int, end: int, withscores: bool = False, **_kwargs: Any) -> list[Any]:
+        return self.zrange(name, start, end, desc=True, withscores=withscores)
+
+    @staticmethod
+    def _zscore_bound(bound: Any, *, upper: bool) -> tuple[str, float | None]:
+        """Turn a Redis score bound (``-inf``, ``+inf``, ``(5``, ``5``) into a SQL comparison."""
+        raw = str(bound).strip().lower()
+        if raw in ("-inf", "+inf", "inf"):
+            return "", None
+        exclusive = raw.startswith("(")
+        value = float(raw[1:] if exclusive else raw)
+        if upper:
+            return ("<" if exclusive else "<="), value
+        return (">" if exclusive else ">="), value
+
+    def zremrangebyscore(self, name: str, min: Any, max: Any) -> int:  # noqa: A002 - redis-py signature
+        clauses = [self._ZSET_LIVE]
+        params: dict[str, Any] = {"zk": name}
+        for key, bound, upper in (("lo", min, False), ("hi", max, True)):
+            op, value = self._zscore_bound(bound, upper=upper)
+            if op:
+                clauses.append(f"score {op} :{key}")
+                params[key] = value
+        with self._engine.begin() as conn:
+            res = conn.execute(text(f"DELETE FROM kv_zset_member WHERE {' AND '.join(clauses)}"), params)
+        return res.rowcount
+
+    def zremrangebyrank(self, name: str, start: int, end: int) -> int:
+        with self._engine.begin() as conn:
+            window = self._zrank_window(conn, name, start, end)
+            if window is None:
+                return 0
+            offset, limit = window
+            res = conn.execute(
+                text(
+                    "DELETE FROM kv_zset_member WHERE zset_key = :zk AND member IN ("
+                    f"  SELECT member FROM kv_zset_member WHERE {self._ZSET_LIVE} "
+                    "  ORDER BY score ASC, member ASC OFFSET :offset LIMIT :limit"
+                    ")"
+                ),
+                {"zk": name, "offset": offset, "limit": limit},
+            )
+        return res.rowcount
 
     # ------------------------------------------------------------------
     # Scan (pattern matching) — used by sync_status_service to enumerate
