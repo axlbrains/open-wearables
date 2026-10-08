@@ -18,6 +18,7 @@ from app.services.providers.base_strategy import (
     InvalidApiKeyError,
     ProviderCapabilities,
     ProviderCoverage,
+    ProviderUnavailableError,
 )
 from app.services.providers.hevy.coverage import HEALTH_SCORES, SLEEP_FIELDS, TIMESERIES, WORKOUT_FIELDS
 from app.services.providers.hevy.workouts import HevyWorkouts
@@ -81,16 +82,22 @@ class HevyStrategy(BaseProviderStrategy):
         """Validate the key against GET /v1/user/info and upsert the connection.
 
         Raises InvalidApiKeyError when Hevy rejects the key (invalid, regenerated,
-        or the account's Pro subscription lapsed).
+        or the account's Pro subscription lapsed), and ProviderUnavailableError when
+        Hevy cannot answer (timeout, connection error, 429, 5xx, unexpected body).
         """
-        response = httpx.get(
-            f"{self.api_base_url}/v1/user/info",
-            headers={"api-key": api_key},
-            timeout=30.0,
-        )
+        try:
+            response = httpx.get(
+                f"{self.api_base_url}/v1/user/info",
+                headers={"api-key": api_key},
+                timeout=30.0,
+            )
+        except httpx.HTTPError as e:
+            raise ProviderUnavailableError(f"Hevy is unreachable: {e.__class__.__name__}") from e
         if response.status_code in (401, 403, 404):
             raise InvalidApiKeyError("Hevy rejected the API key")
-        response.raise_for_status()
+        if response.status_code >= 400:
+            # 429 and 5xx say nothing about the key; never report them as an invalid one.
+            raise ProviderUnavailableError(f"Hevy returned HTTP {response.status_code}")
         try:
             payload = response.json()
             # The live API wraps the user in {"data": {...}}; accept the bare and
@@ -98,7 +105,8 @@ class HevyStrategy(BaseProviderStrategy):
             body = payload.get("data") or payload.get("user_info") or payload
             user_info = HevyUserInfo.model_validate(body)
         except (ValueError, ValidationError) as e:
-            raise InvalidApiKeyError(f"Unexpected Hevy user info response: {e}") from e
+            # Hevy accepted the key (2xx) but the body is not what we expect: their side.
+            raise ProviderUnavailableError(f"Unexpected Hevy user info response: {e}") from e
 
         existing = self.connection_repo.get_by_user_and_provider(db, user_id, self.name)
         if existing:
@@ -107,9 +115,10 @@ class HevyStrategy(BaseProviderStrategy):
             # API keys don't expire and there is no refresh token.
             existing.refresh_token = None
             existing.token_expires_at = None
-            if not existing.provider_user_id:
-                existing.provider_user_id = user_info.id
-            if user_info.display_name and not existing.provider_username:
+            # The new key may belong to a different Hevy account: the identity always
+            # follows the key that was just validated, never the one stored before.
+            existing.provider_user_id = user_info.id
+            if user_info.display_name:
                 existing.provider_username = user_info.display_name
             existing.status = ConnectionStatus.ACTIVE
             existing.updated_at = datetime.now(timezone.utc)

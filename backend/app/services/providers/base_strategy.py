@@ -141,6 +141,23 @@ class InvalidApiKeyError(Exception):
     """An api_key_connect provider rejected the supplied API key."""
 
 
+class ProviderUnavailableError(Exception):
+    """The provider could not be reached or answered with an error that says nothing
+    about the caller's input (timeout, connection error, 429, 5xx, unexpected body).
+
+    Kept apart from InvalidApiKeyError so an outage is never reported as a bad key.
+    """
+
+
+class IncompleteSyncError(Exception):
+    """A provider's load_data did not fully apply the requested window.
+
+    Raised by providers whose feed is cursor-based (e.g. an events-since feed), where
+    advancing ``last_synced_at`` past a partial fetch would lose the rest for good.
+    A live sync keeps the cursor where it was, so the next run fetches the window again.
+    """
+
+
 @runtime_checkable
 class ApiKeyConnectable(Protocol):
     """What ``ProviderCapabilities.api_key_connect = True`` promises.
