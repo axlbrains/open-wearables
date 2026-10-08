@@ -97,6 +97,18 @@ variable "create_cloud_sql" {
   default     = true
 }
 
+variable "cloud_sql_activation_policy" {
+  description = "ALWAYS or NEVER (stopped, data kept)."
+  type        = string
+  default     = "ALWAYS"
+}
+
+variable "scheduler_jobs_paused" {
+  description = "Pause every scheduler job of the test stack."
+  type        = bool
+  default     = false
+}
+
 variable "cloud_sql_tier" {
   description = "Cloud SQL machine type for the OW DB."
   type        = string

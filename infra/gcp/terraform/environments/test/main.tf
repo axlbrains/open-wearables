@@ -21,6 +21,8 @@ module "open_wearables_stack" {
   create_network                    = var.create_network
   create_cloud_sql                  = var.create_cloud_sql
   cloud_sql_tier                    = var.cloud_sql_tier
+  cloud_sql_activation_policy       = var.cloud_sql_activation_policy
+  scheduler_jobs_paused             = var.scheduler_jobs_paused
   cloud_sql_disk_size_gb            = var.cloud_sql_disk_size_gb
   create_vpc_connector              = var.create_vpc_connector
   vpc_connector_name                = var.vpc_connector_name

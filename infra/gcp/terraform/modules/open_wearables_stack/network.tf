@@ -28,8 +28,8 @@ data "google_vpc_access_connector" "main" {
 }
 
 locals {
-  network_id = var.create_network ? google_compute_network.main[0].id : try(data.google_compute_network.main[0].id, null)
-  subnetwork_name = var.create_network ? google_compute_subnetwork.main[0].name : try(data.google_compute_subnetwork.main[0].name, var.subnetwork_name)
+  network_id       = var.create_network ? google_compute_network.main[0].id : try(data.google_compute_network.main[0].id, null)
+  subnetwork_name  = var.create_network ? google_compute_subnetwork.main[0].name : try(data.google_compute_subnetwork.main[0].name, var.subnetwork_name)
   vpc_connector_id = var.create_vpc_connector ? google_vpc_access_connector.main[0].id : try(data.google_vpc_access_connector.main[0].id, var.vpc_connector_name != null ? "projects/${var.project_id}/locations/${var.region}/connectors/${var.vpc_connector_name}" : null)
 }
 

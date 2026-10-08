@@ -17,10 +17,10 @@ data "google_redis_instance" "main" {
 }
 
 locals {
-  cloud_sql_instance_name = var.create_cloud_sql ? google_sql_database_instance.main[0].name : (var.cloud_sql_instance_name != null ? data.google_sql_database_instance.main[0].name : null)
+  cloud_sql_instance_name   = var.create_cloud_sql ? google_sql_database_instance.main[0].name : (var.cloud_sql_instance_name != null ? data.google_sql_database_instance.main[0].name : null)
   cloud_sql_connection_name = var.create_cloud_sql ? google_sql_database_instance.main[0].connection_name : (var.cloud_sql_instance_name != null ? data.google_sql_database_instance.main[0].connection_name : null)
-  redis_host = var.create_memorystore ? google_redis_instance.main[0].host : (var.memorystore_name != null ? data.google_redis_instance.main[0].host : null)
-  redis_port = var.create_memorystore ? google_redis_instance.main[0].port : (var.memorystore_name != null ? data.google_redis_instance.main[0].port : 6379)
+  redis_host                = var.create_memorystore ? google_redis_instance.main[0].host : (var.memorystore_name != null ? data.google_redis_instance.main[0].host : null)
+  redis_port                = var.create_memorystore ? google_redis_instance.main[0].port : (var.memorystore_name != null ? data.google_redis_instance.main[0].port : 6379)
 }
 
 resource "google_sql_database_instance" "main" {
@@ -34,6 +34,7 @@ resource "google_sql_database_instance" "main" {
 
   settings {
     tier              = var.cloud_sql_tier
+    activation_policy = var.cloud_sql_activation_policy
     edition           = "ENTERPRISE"
     availability_type = var.cloud_sql_availability_type
     disk_size         = var.cloud_sql_disk_size_gb

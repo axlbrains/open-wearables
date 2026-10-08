@@ -90,6 +90,7 @@ resource "google_cloud_scheduler_job" "jobs" {
   description = each.value.description
   schedule    = each.value.schedule
   time_zone   = each.value.time_zone
+  paused      = var.scheduler_jobs_paused
 
   http_target {
     uri         = each.value.target_url

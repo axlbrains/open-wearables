@@ -717,6 +717,18 @@ variable "cloud_sql_deletion_protection" {
   default     = true
 }
 
+variable "cloud_sql_activation_policy" {
+  description = "ALWAYS keeps the instance running; NEVER stops it (data and backups are kept, compute is not billed)."
+  type        = string
+  default     = "ALWAYS"
+}
+
+variable "scheduler_jobs_paused" {
+  description = "Pause every Cloud Scheduler job of this stack (e.g. while its database is stopped)."
+  type        = bool
+  default     = false
+}
+
 variable "cloud_sql_tier" {
   description = "The machine type for the Cloud SQL instance."
   type        = string
