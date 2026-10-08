@@ -12,7 +12,12 @@ from app.schemas.auth import ConnectionStatus, LiveSyncMode, SDKAuthContext
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.user_management import ApiKeyConnectRequest, UserConnectionWithCapabilities
 from app.services import ApiKeyDep, user_connection_service
-from app.services.providers.base_strategy import ApiKeyConnectable, BaseProviderStrategy, InvalidApiKeyError
+from app.services.providers.base_strategy import (
+    ApiKeyConnectable,
+    BaseProviderStrategy,
+    InvalidApiKeyError,
+    ProviderUnavailableError,
+)
 from app.services.providers.factory import ProviderFactory
 from app.utils.auth import CombinedAuthDep
 
@@ -101,6 +106,9 @@ def connect_provider_with_api_key_endpoint(
         connection = strategy.connect_with_api_key(db, user_id, body.api_key)
     except InvalidApiKeyError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+    except ProviderUnavailableError as e:
+        # The key may well be valid; the provider just could not confirm it right now.
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(e)) from e
 
     # Mirror the OAuth callback's post-connect behaviour: cursor to now, then a
     # 90-day historical backfill (HISTORICAL_SYNC_ON_CONNECT) off the request thread.

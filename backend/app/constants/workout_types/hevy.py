@@ -1,4 +1,10 @@
+import re
+
 from app.schemas.enums import WorkoutType
+
+# Runs of letters only: punctuation, digits and separators all split words, so
+# "Run: easy" and "5k run" match "run" while "Grunning" stays one word.
+_WORD_RE = re.compile(r"[^\W\d_]+")
 
 # Hevy is a gym/strength tracker: workouts have no activity-type field, only a
 # free-form title ("Morning Workout", "Push Day", ...). Everything defaults to
@@ -32,7 +38,7 @@ def get_unified_workout_type(title: str | None = None) -> WorkoutType:
     (Hevy sessions are gym workouts unless the title says otherwise).
     """
     if title:
-        words = set(title.lower().replace("-", " ").split())
+        words = set(_WORD_RE.findall(title.lower()))
         for keyword, workout_type in HEVY_TITLE_KEYWORD_TO_WORKOUT_TYPE.items():
             if keyword in words:
                 return workout_type

@@ -17,7 +17,7 @@ from pydantic import ValidationError
 
 from app.constants.workout_types.hevy import get_unified_workout_type
 from app.database import DbSession
-from app.models import UserConnection
+from app.models import DataSource, EventRecord, UserConnection
 from app.schemas.auth import ConnectionStatus
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
@@ -26,6 +26,7 @@ from app.schemas.model_crud.activities import (
 )
 from app.schemas.providers.hevy import HevyWorkout
 from app.services.event_record_service import event_record_service
+from app.services.providers.base_strategy import IncompleteSyncError
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.raw_payload_storage import store_raw_payload
 from app.utils.structured_logging import log_structured
@@ -34,6 +35,54 @@ from app.utils.structured_logging import log_structured
 _PAGE_SIZE = 10
 # Hard stop for the pagination loop; 1000 pages x 10 = 10k workouts per sync.
 _MAX_PAGES = 1000
+
+
+def _event_time(event: dict[str, Any]) -> datetime | None:
+    """When the event happened: the workout's updated_at, or the deletion time."""
+    raw = event.get("deleted_at")
+    if event.get("type") == "updated" and isinstance(event.get("workout"), dict):
+        raw = event["workout"].get("updated_at")
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _latest_per_workout(events: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Collapse the feed to the newest event per workout id.
+
+    Hevy lists events newest first, so the first one seen for an id wins; a later
+    one only takes over if its own timestamp is strictly newer, which keeps this
+    correct even if the feed order ever changes.
+    """
+    latest: dict[str, tuple[datetime | None, dict[str, Any]]] = {}
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "updated" and isinstance(event.get("workout"), dict):
+            workout_id = event["workout"].get("id")
+        elif event_type == "deleted":
+            workout_id = event.get("id")
+        else:
+            continue
+        if not workout_id:
+            continue
+        key = str(workout_id)
+        when = _event_time(event)
+        seen = latest.get(key)
+        if seen is None or (when is not None and seen[0] is not None and when > seen[0]):
+            latest[key] = (when, event)
+
+    updated: list[dict[str, Any]] = []
+    deleted_ids: list[str] = []
+    for key, (_, event) in latest.items():
+        if event["type"] == "updated":
+            updated.append(event["workout"])
+        else:
+            deleted_ids.append(key)
+    return updated, deleted_ids
 
 
 class HevyWorkouts(BaseWorkoutsTemplate):
@@ -101,9 +150,16 @@ class HevyWorkouts(BaseWorkoutsTemplate):
     def get_workout_events(
         self, db: DbSession, user_id: UUID, since: datetime
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        """Page through /v1/workouts/events and split into (updated workouts, deleted ids)."""
-        updated: list[dict[str, Any]] = []
-        deleted_ids: list[str] = []
+        """Page through /v1/workouts/events and split into (updated workouts, deleted ids).
+
+        All-or-nothing: a failure on any page raises IncompleteSyncError instead of
+        returning what earlier pages yielded, so the caller keeps its cursor and the
+        next sync asks for the whole window again (replaying it is idempotent).
+
+        Only the newest event per workout id is kept, so an older delete cannot remove
+        a newer edit and an older edit cannot overwrite a newer one.
+        """
+        events: list[dict[str, Any]] = []
         page = 1
         while page <= _MAX_PAGES:
             try:
@@ -121,32 +177,18 @@ class HevyWorkouts(BaseWorkoutsTemplate):
                 log_structured(
                     self.logger,
                     "error",
-                    f"Error fetching Hevy workout events: {e}",
+                    f"Error fetching Hevy workout events (page {page}): {e}",
                     provider=self.provider_name,
                     task="get_workout_events",
                 )
-                if updated or deleted_ids:
-                    log_structured(
-                        self.logger,
-                        "warning",
-                        f"Returning partial Hevy events due to error: {e}",
-                        provider=self.provider_name,
-                        task="get_workout_events",
-                    )
-                    break
-                raise
-            events = response.get("events", []) if isinstance(response, dict) else []
-            for event in events:
-                event_type = event.get("type")
-                if event_type == "updated" and isinstance(event.get("workout"), dict):
-                    updated.append(event["workout"])
-                elif event_type == "deleted" and event.get("id"):
-                    deleted_ids.append(str(event["id"]))
+                raise IncompleteSyncError(f"Hevy events page {page} failed: {e}") from e
+            page_events = response.get("events", []) if isinstance(response, dict) else []
+            events.extend(page_events)
             page_count = int(response.get("page_count") or 1) if isinstance(response, dict) else 1
-            if page >= page_count or not events:
+            if page >= page_count or not page_events:
                 break
             page += 1
-        return updated, deleted_ids
+        return _latest_per_workout(events)
 
     def get_workouts(self, db: DbSession, user_id: UUID, start_date: datetime, end_date: datetime) -> list[Any]:
         """Workouts updated since ``start_date`` (the events feed has no upper bound)."""
@@ -210,6 +252,15 @@ class HevyWorkouts(BaseWorkoutsTemplate):
 
         updated, deleted_ids = self.get_workout_events(db, user_id, since=start_dt)
 
+        try:
+            count = self._apply_events(db, user_id, updated, deleted_ids)
+        except Exception as e:
+            # A write failed part-way: keep the cursor so the window is replayed.
+            db.rollback()
+            raise IncompleteSyncError(f"Applying Hevy events failed: {e}") from e
+        return count
+
+    def _apply_events(self, db: DbSession, user_id: UUID, updated: list[dict[str, Any]], deleted_ids: list[str]) -> int:
         count = 0
         for raw_workout in updated:
             try:
@@ -223,10 +274,8 @@ class HevyWorkouts(BaseWorkoutsTemplate):
                     task="load_data",
                 )
                 continue
-            created_record = event_record_service.create(db, record)
-            detail_for_record = detail.model_copy(update={"record_id": created_record.id})
-            event_record_service.create_detail(db, detail_for_record)
-            count += 1
+            if self._upsert_workout(db, user_id, record, detail):
+                count += 1
 
         for external_id in deleted_ids:
             deleted = self.workout_repo.delete_by_external_id(db, user_id, external_id, source=self.provider_name)
@@ -239,3 +288,75 @@ class HevyWorkouts(BaseWorkoutsTemplate):
                     task="load_data",
                 )
         return count
+
+    def _stored_workouts(self, db: DbSession, user_id: UUID, external_id: str) -> list[EventRecord]:
+        """This user's Hevy workouts carrying ``external_id``, oldest first."""
+        return (
+            db.query(EventRecord)
+            .join(DataSource, EventRecord.data_source_id == DataSource.id)
+            .filter(
+                DataSource.user_id == user_id,
+                DataSource.source == self.provider_name,
+                EventRecord.category == "workout",
+                EventRecord.external_id == external_id,
+            )
+            .order_by(EventRecord.created_at, EventRecord.id)
+            .all()
+        )
+
+    def _upsert_workout(
+        self, db: DbSession, user_id: UUID, record: EventRecordCreate, detail: EventRecordDetailCreate
+    ) -> bool:
+        """Insert a new workout, or update the stored one in place, keyed by Hevy's id.
+
+        The record table dedupes on (data_source_id, start, end), so an edit that moves
+        a workout's times would otherwise land as a second row. Matching on the Hevy
+        id instead keeps one row per workout, and the detail is replaced rather than
+        merged so removed exercises or sets do not linger.
+        """
+        stored = self._stored_workouts(db, user_id, record.external_id) if record.external_id else []
+        if not stored:
+            created_record = event_record_service.create(db, record)
+            event_record_service.create_detail(db, detail.model_copy(update={"record_id": created_record.id}))
+            return True
+
+        existing, *duplicates = stored
+        if duplicates:
+            # Left behind by earlier syncs that inserted an edit as a new row; the
+            # detail rows go with them through the foreign key's ON DELETE CASCADE.
+            db.query(EventRecord).filter(EventRecord.id.in_([d.id for d in duplicates])).delete(
+                synchronize_session=False
+            )
+            db.flush()
+
+        clash = (
+            db.query(EventRecord.id)
+            .filter(
+                EventRecord.data_source_id == existing.data_source_id,
+                EventRecord.category != "meal",
+                EventRecord.start_datetime == record.start_datetime,
+                EventRecord.end_datetime == record.end_datetime,
+                EventRecord.id != existing.id,
+            )
+            .first()
+        )
+        if clash is not None:
+            db.rollback()
+            log_structured(
+                self.logger,
+                "warning",
+                f"Skipping Hevy workout {record.external_id}: its new times collide with another workout",
+                provider=self.provider_name,
+                task="load_data",
+            )
+            return False
+
+        existing.type = record.type
+        existing.source_name = record.source_name
+        existing.duration_seconds = record.duration_seconds
+        existing.start_datetime = record.start_datetime
+        existing.end_datetime = record.end_datetime
+        event_record_service.event_record_detail_repo.delete_by_record_id(db, existing.id, "workout")
+        db.commit()
+        event_record_service.create_detail(db, detail.model_copy(update={"record_id": existing.id}))
+        return True
