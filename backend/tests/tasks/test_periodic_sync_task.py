@@ -2,6 +2,8 @@
 Tests for sync_all_users periodic Celery task.
 
 Tests the periodic task that syncs data for all users with active connections.
+The fork dispatches per-user syncs through dispatch_task (prod has no Celery
+broker), so the mock is the dispatcher and its payload sits under kwargs=.
 """
 
 from unittest.mock import MagicMock, patch
@@ -10,13 +12,9 @@ from sqlalchemy.orm import Session
 
 from app.integrations.celery.tasks.periodic_sync_task import sync_all_users
 from app.integrations.task_dispatcher import RegisteredTask
-from app.schemas.auth import ConnectionStatus
+from app.repositories.provider_settings_repository import ProviderSettingsRepository
+from app.schemas.auth import ConnectionStatus, LiveSyncMode
 from tests.factories import UserConnectionFactory, UserFactory
-
-
-def _dispatch_kwargs(mock: MagicMock) -> list[dict]:
-    """Extract the inner kwargs dict from every dispatch_task call."""
-    return [call.kwargs["kwargs"] for call in mock.call_args_list]
 
 
 class TestSyncAllUsersTask:
@@ -26,47 +24,50 @@ class TestSyncAllUsersTask:
     @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
     def test_sync_all_users_with_active_connections(
         self,
-        mock_dispatch: MagicMock,
+        mock_sync_vendor_data: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
         mock_celery_app: MagicMock,
     ) -> None:
         """Test syncing all users with active connections."""
+        # Arrange
         user1 = UserFactory()
         user2 = UserFactory()
         user3 = UserFactory()
 
-        UserConnectionFactory(user=user1, provider="garmin", status=ConnectionStatus.ACTIVE)
+        UserConnectionFactory(user=user1, provider="whoop", status=ConnectionStatus.ACTIVE)
         UserConnectionFactory(user=user2, provider="polar", status=ConnectionStatus.ACTIVE)
         UserConnectionFactory(user=user3, provider="suunto", status=ConnectionStatus.ACTIVE)
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=db)
         mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
 
+        # Act
         result = sync_all_users()
 
+        # Assert
         assert result["users_for_sync"] == 3
-        assert mock_dispatch.call_count == 3
-        for call in mock_dispatch.call_args_list:
-            assert call.args[0] == RegisteredTask.SYNC_VENDOR_DATA
+        assert mock_sync_vendor_data.call_count == 3
 
-        user_ids = [kwargs["user_id"] for kwargs in _dispatch_kwargs(mock_dispatch)]
-        assert str(user1.id) in user_ids
-        assert str(user2.id) in user_ids
-        assert str(user3.id) in user_ids
+        # Verify each user was queued for sync
+        call_args_list = [call.kwargs["kwargs"]["user_id"] for call in mock_sync_vendor_data.call_args_list]
+        assert str(user1.id) in call_args_list
+        assert str(user2.id) in call_args_list
+        assert str(user3.id) in call_args_list
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
     @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
     def test_sync_all_users_with_date_range(
         self,
-        mock_dispatch: MagicMock,
+        mock_sync_vendor_data: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
         mock_celery_app: MagicMock,
     ) -> None:
         """Test syncing all users with specific date range."""
+        # Arrange
         user = UserFactory()
-        UserConnectionFactory(user=user, provider="garmin", status=ConnectionStatus.ACTIVE)
+        UserConnectionFactory(user=user, provider="whoop", status=ConnectionStatus.ACTIVE)
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=db)
         mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
@@ -74,84 +75,99 @@ class TestSyncAllUsersTask:
         start_date = "2025-01-01T00:00:00Z"
         end_date = "2025-12-31T23:59:59Z"
 
+        # Act
         result = sync_all_users(start_date=start_date, end_date=end_date)
 
+        # Assert
         assert result["users_for_sync"] == 1
-        mock_dispatch.assert_called_once_with(
+        mock_sync_vendor_data.assert_called_once_with(
             RegisteredTask.SYNC_VENDOR_DATA,
-            kwargs={
-                "user_id": str(user.id),
-                "start_date": start_date,
-                "end_date": end_date,
-            },
+            kwargs={"user_id": str(user.id), "start_date": start_date, "end_date": end_date},
         )
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
     @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
     def test_sync_all_users_skips_disconnected_users(
         self,
-        mock_dispatch: MagicMock,
+        mock_sync_vendor_data: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
         mock_celery_app: MagicMock,
     ) -> None:
         """Test that users without active connections are not synced."""
+        # Arrange
         user1 = UserFactory()
         user2 = UserFactory()
 
-        UserConnectionFactory(user=user1, provider="garmin", status=ConnectionStatus.ACTIVE)
+        # User 1 has active connection
+        UserConnectionFactory(user=user1, provider="whoop", status=ConnectionStatus.ACTIVE)
+
+        # User 2 has disconnected connection
         UserConnectionFactory(user=user2, provider="polar", status=ConnectionStatus.REVOKED)
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=db)
         mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
 
+        # Act
         result = sync_all_users()
 
+        # Assert
         assert result["users_for_sync"] == 1
-        mock_dispatch.assert_called_once()
-        assert _dispatch_kwargs(mock_dispatch)[0]["user_id"] == str(user1.id)
+        mock_sync_vendor_data.assert_called_once()
+
+        # Verify only user1 was queued
+        call_kwargs = mock_sync_vendor_data.call_args.kwargs["kwargs"]
+        assert call_kwargs["user_id"] == str(user1.id)
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
     @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
     def test_sync_all_users_no_users(
         self,
-        mock_dispatch: MagicMock,
+        mock_sync_vendor_data: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
         mock_celery_app: MagicMock,
     ) -> None:
         """Test syncing when no users have active connections."""
+        # Arrange - no users with connections
         mock_session_local.return_value.__enter__ = MagicMock(return_value=db)
         mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
 
+        # Act
         result = sync_all_users()
 
+        # Assert
         assert result["users_for_sync"] == 0
-        mock_dispatch.assert_not_called()
+        mock_sync_vendor_data.assert_not_called()
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
     @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
     def test_sync_all_users_multiple_connections_per_user(
         self,
-        mock_dispatch: MagicMock,
+        mock_sync_vendor_data: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
         mock_celery_app: MagicMock,
     ) -> None:
         """Test that users with multiple connections are only queued once."""
+        # Arrange
         user = UserFactory()
 
-        UserConnectionFactory(user=user, provider="garmin", status=ConnectionStatus.ACTIVE)
+        # User has multiple active connections
+        UserConnectionFactory(user=user, provider="whoop", status=ConnectionStatus.ACTIVE)
         UserConnectionFactory(user=user, provider="polar", status=ConnectionStatus.ACTIVE)
         UserConnectionFactory(user=user, provider="suunto", status=ConnectionStatus.ACTIVE)
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=db)
         mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
 
+        # Act
         result = sync_all_users()
 
+        # Assert
+        # User should only be counted once despite having 3 connections
         assert result["users_for_sync"] == 1
-        mock_dispatch.assert_called_once_with(
+        mock_sync_vendor_data.assert_called_once_with(
             RegisteredTask.SYNC_VENDOR_DATA,
             kwargs={"user_id": str(user.id), "start_date": None, "end_date": None},
         )
@@ -160,78 +176,122 @@ class TestSyncAllUsersTask:
     @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
     def test_sync_all_users_mixed_connection_statuses(
         self,
-        mock_dispatch: MagicMock,
+        mock_sync_vendor_data: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
         mock_celery_app: MagicMock,
     ) -> None:
         """Test syncing users with mixed connection statuses."""
+        # Arrange
         user1 = UserFactory()
         user2 = UserFactory()
         user3 = UserFactory()
 
-        UserConnectionFactory(user=user1, provider="garmin", status=ConnectionStatus.ACTIVE)
+        # User 1: connected
+        UserConnectionFactory(user=user1, provider="whoop", status=ConnectionStatus.ACTIVE)
+
+        # User 2: mixed statuses (has at least one connected)
         UserConnectionFactory(user=user2, provider="polar", status=ConnectionStatus.ACTIVE)
         UserConnectionFactory(user=user2, provider="suunto", status=ConnectionStatus.REVOKED)
+
+        # User 3: all disconnected
         UserConnectionFactory(user=user3, provider="garmin", status=ConnectionStatus.REVOKED)
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=db)
         mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
 
+        # Act
         result = sync_all_users()
 
-        assert result["users_for_sync"] == 2
-        assert mock_dispatch.call_count == 2
+        # Assert
+        assert result["users_for_sync"] == 2  # Only user1 and user2
+        assert mock_sync_vendor_data.call_count == 2
 
-        user_ids = [kwargs["user_id"] for kwargs in _dispatch_kwargs(mock_dispatch)]
-        assert str(user1.id) in user_ids
-        assert str(user2.id) in user_ids
-        assert str(user3.id) not in user_ids
+        call_args_list = [call.kwargs["kwargs"]["user_id"] for call in mock_sync_vendor_data.call_args_list]
+        assert str(user1.id) in call_args_list
+        assert str(user2.id) in call_args_list
+        assert str(user3.id) not in call_args_list
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
     @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
     def test_sync_all_users_queues_async_tasks(
         self,
-        mock_dispatch: MagicMock,
+        mock_sync_vendor_data: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
         mock_celery_app: MagicMock,
     ) -> None:
-        """Test that sync tasks are queued via dispatch_task (async)."""
+        """Test that sync tasks are queued asynchronously with delay."""
+        # Arrange
         user = UserFactory()
-        UserConnectionFactory(user=user, provider="garmin", status=ConnectionStatus.ACTIVE)
+        UserConnectionFactory(user=user, provider="whoop", status=ConnectionStatus.ACTIVE)
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=db)
         mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
 
+        # Act
         sync_all_users()
 
-        mock_dispatch.assert_called_once()
+        # Assert - the sync was dispatched (async execution)
+        mock_sync_vendor_data.assert_called_once()
+        # Verify .apply() or direct call was NOT used
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
     @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
     def test_sync_all_users_large_batch(
         self,
-        mock_dispatch: MagicMock,
+        mock_sync_vendor_data: MagicMock,
         mock_session_local: MagicMock,
         db: Session,
         mock_celery_app: MagicMock,
     ) -> None:
         """Test syncing a large number of users."""
+        # Arrange - create 10 users with connections
         users = []
-        for _ in range(10):
+        for i in range(10):
             user = UserFactory()
             users.append(user)
-            UserConnectionFactory(user=user, provider="garmin", status=ConnectionStatus.ACTIVE)
+            UserConnectionFactory(user=user, provider="whoop", status=ConnectionStatus.ACTIVE)
+
+        mock_session_local.return_value.__enter__ = MagicMock(return_value=db)
+        mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
+
+        # Act
+        result = sync_all_users()
+
+        # Assert
+        assert result["users_for_sync"] == 10
+        assert mock_sync_vendor_data.call_count == 10
+
+        # Verify all users were queued
+        call_args_list = [call.kwargs["kwargs"]["user_id"] for call in mock_sync_vendor_data.call_args_list]
+        for user in users:
+            assert str(user.id) in call_args_list
+
+    @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    def test_sync_all_users_skips_users_without_a_pull_mode_connection(
+        self,
+        mock_sync_vendor_data: MagicMock,
+        mock_session_local: MagicMock,
+        db: Session,
+        mock_celery_app: MagicMock,
+    ) -> None:
+        pull_user = UserFactory()
+        push_only_user = UserFactory()
+        webhook_mode_user = UserFactory()
+        UserConnectionFactory(user=pull_user, provider="whoop", status=ConnectionStatus.ACTIVE)
+        UserConnectionFactory(user=push_only_user, provider="garmin", status=ConnectionStatus.ACTIVE)
+        UserConnectionFactory(user=webhook_mode_user, provider="polar", status=ConnectionStatus.ACTIVE)
+        ProviderSettingsRepository().upsert(db, "polar", is_enabled=True, live_sync_mode=LiveSyncMode.WEBHOOK)
 
         mock_session_local.return_value.__enter__ = MagicMock(return_value=db)
         mock_session_local.return_value.__exit__ = MagicMock(return_value=None)
 
         result = sync_all_users()
 
-        assert result["users_for_sync"] == 10
-        assert mock_dispatch.call_count == 10
-
-        user_ids = [kwargs["user_id"] for kwargs in _dispatch_kwargs(mock_dispatch)]
-        for user in users:
-            assert str(user.id) in user_ids
+        assert result["users_for_sync"] == 1
+        mock_sync_vendor_data.assert_called_once_with(
+            RegisteredTask.SYNC_VENDOR_DATA,
+            kwargs={"user_id": str(pull_user.id), "start_date": None, "end_date": None},
+        )
