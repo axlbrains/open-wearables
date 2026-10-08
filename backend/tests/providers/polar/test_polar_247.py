@@ -1,15 +1,19 @@
 """Tests for Polar247Data normalization."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.orm import Session
 
+from app.models import EventRecord, HealthScore
 from app.repositories.data_point_series_repository import WriteCounts
-from app.schemas.enums import HealthScoreCategory, SeriesType
+from app.schemas.enums import HealthScoreCategory, ProviderName, SeriesType
+from app.schemas.providers.polar import PolarWebhookEventType
 from app.services.providers.polar.data_247 import Polar247Data
 from app.services.providers.polar.strategy import PolarStrategy
+from tests.factories import DataSourceFactory, EventRecordFactory, UserFactory
 
 
 @pytest.fixture
@@ -652,3 +656,116 @@ class TestPolar247HypnogramParsing:
         start = datetime(2024, 1, 15, 23, 0, tzinfo=timezone.utc)
         end = datetime(2024, 1, 16, 7, 0, tzinfo=timezone.utc)
         assert data_247._parse_hypnogram({}, start, end) == []
+
+
+# ---------------------------------------------------------------------------
+# Late-arriving sleep nights
+# ---------------------------------------------------------------------------
+
+
+class TestPolar247LateSleepNights:
+    """A night can enter /sleep/available days after its date, once the device syncs."""
+
+    WINDOW_START = datetime(2026, 9, 7, 2, 0, tzinfo=timezone.utc)
+    WINDOW_END = datetime(2026, 9, 7, 8, 0, tzinfo=timezone.utc)
+
+    def _fetched(self, data_247: Polar247Data, available: set[date], stored: set[date]) -> list[str]:
+        fetched: list[str] = []
+
+        def fake_request(db: object, user_id: object, endpoint: str, **kwargs: object) -> dict:
+            fetched.append(endpoint)
+            return {"date": endpoint.rsplit("/", 1)[-1]}
+
+        with (
+            patch.object(data_247, "_get_available_sleep_dates", return_value=available),
+            patch.object(data_247, "_make_api_request", side_effect=fake_request),
+            patch(
+                "app.services.providers.polar.data_247.event_record_service.get_sleep_end_dates",
+                return_value=stored,
+            ) as probe,
+        ):
+            data_247.get_sleep_data(MagicMock(), uuid4(), self.WINDOW_START, self.WINDOW_END)
+        self.probe = probe
+        return fetched
+
+    def test_late_nights_outside_the_window_are_fetched(self, data_247: Polar247Data) -> None:
+        fetched = self._fetched(data_247, {date(2026, 8, 30), date(2026, 8, 31)}, stored=set())
+
+        assert fetched == ["/v3/users/sleep/2026-08-30", "/v3/users/sleep/2026-08-31"]
+        assert self.probe.call_args.args[2] == "polar"
+
+    def test_already_stored_late_nights_are_skipped(self, data_247: Polar247Data) -> None:
+        fetched = self._fetched(data_247, {date(2026, 8, 30), date(2026, 8, 31)}, stored={date(2026, 8, 30)})
+
+        assert fetched == ["/v3/users/sleep/2026-08-31"]
+
+    def test_nights_past_polar_retention_are_ignored(self, data_247: Polar247Data) -> None:
+        fetched = self._fetched(data_247, {date(2026, 8, 10)}, stored=set())
+
+        assert fetched == []
+        self.probe.assert_not_called()
+
+    def test_window_nights_are_fetched_even_when_stored(self, data_247: Polar247Data) -> None:
+        fetched = self._fetched(data_247, {date(2026, 9, 7)}, stored={date(2026, 9, 7)})
+
+        assert fetched == ["/v3/users/sleep/2026-09-07"]
+        self.probe.assert_not_called()
+
+
+class TestPolar247SleepScoreAfterMerge:
+    """create_or_merge_sleep may keep another row, so the score must follow the saved record."""
+
+    @pytest.fixture
+    def raw_night(self) -> dict:
+        return {
+            "date": "2026-09-07",
+            "sleep_start_time": "2026-09-06T23:00:00+00:00",
+            "sleep_end_time": "2026-09-07T07:00:00+00:00",
+            "light_sleep": 14400,
+            "deep_sleep": 5400,
+            "rem_sleep": 7200,
+            "sleep_score": 82,
+        }
+
+    def test_pull_sync_points_score_at_merged_record(
+        self, db: Session, data_247: Polar247Data, raw_night: dict
+    ) -> None:
+        user = UserFactory()
+        data_source = DataSourceFactory(user=user, provider=ProviderName.POLAR, source=None, device_model=None)
+        # Same night already stored, so the new session gets merged into it
+        EventRecordFactory(
+            data_source=data_source,
+            category="sleep",
+            type_="sleep_session",
+            start_datetime=datetime(2026, 9, 6, 23, 0, tzinfo=timezone.utc),
+            end_datetime=datetime(2026, 9, 7, 7, 0, tzinfo=timezone.utc),
+            duration_seconds=8 * 3600,
+        )
+
+        with patch.object(data_247, "get_sleep_data", return_value=[raw_night]):
+            saved = data_247._save_sleep(
+                db, user.id, datetime(2026, 9, 7, tzinfo=timezone.utc), datetime(2026, 9, 7, 8, tzinfo=timezone.utc)
+            )
+        db.commit()
+
+        assert saved == 1
+        sleep_ids = {r.id for r in db.query(EventRecord).filter(EventRecord.category == "sleep").all()}
+        score = db.query(HealthScore).filter(HealthScore.user_id == user.id).one()
+        assert score.event_record_id in sleep_ids
+
+    def test_webhook_points_score_at_saved_record(self, data_247: Polar247Data, raw_night: dict) -> None:
+        kept_id = uuid4()
+        with (
+            patch.object(data_247, "_make_api_request", return_value=raw_night),
+            patch("app.services.providers.polar.data_247.event_record_service") as records,
+            patch("app.services.providers.polar.data_247.health_score_service") as scores,
+            patch("app.services.providers.polar.data_247.timeseries_service"),
+        ):
+            records.create_or_merge_sleep.return_value = MagicMock(id=kept_id)
+            result = data_247.fetch_and_save_from_webhook(
+                MagicMock(), uuid4(), PolarWebhookEventType.SLEEP, "/v3/users/sleep/2026-09-07"
+            )
+
+        assert result == {"sleep": 1}
+        [saved_scores] = scores.bulk_create.call_args.args[1:]
+        assert [s.event_record_id for s in saved_scores] == [kept_id]

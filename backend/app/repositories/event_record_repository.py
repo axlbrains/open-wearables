@@ -1,5 +1,5 @@
 import contextlib
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -125,6 +125,33 @@ class EventRecordRepository(
         if provider is not None:
             query = query.filter(DataSource.provider == provider)
         return query.one_or_none()
+
+    def get_sleep_end_dates(
+        self,
+        db_session: DbSession,
+        user_id: UUID,
+        provider: str,
+        start_date: date,
+        end_date: date,
+    ) -> set[date]:
+        """Wake-up dates (by end_datetime) that already have a sleep record for the provider.
+
+        Filters by ``DataSource.provider``, not ``source``: pull-ingested rows
+        (e.g. Polar) have no ``source`` set.
+        """
+        rows = (
+            db_session.query(func.date(self.model.end_datetime))
+            .join(DataSource, self.model.data_source_id == DataSource.id)
+            .filter(
+                DataSource.user_id == user_id,
+                DataSource.provider == provider,
+                self.model.category == "sleep",
+                self.model.end_datetime >= datetime.combine(start_date, time.min, tzinfo=timezone.utc),
+                self.model.end_datetime < datetime.combine(end_date + timedelta(days=1), time.min, tzinfo=timezone.utc),
+            )
+            .all()
+        )
+        return {row[0] for row in rows}
 
     def delete_by_external_id(
         self,
