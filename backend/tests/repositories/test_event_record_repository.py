@@ -518,7 +518,7 @@ class TestGetSleepEndDates:
     def event_repo(self) -> EventRecordRepository:
         return EventRecordRepository(EventRecord)
 
-    def _sleep(self, data_source: object, end: datetime) -> None:
+    def _sleep(self, data_source: object, end: datetime, zone_offset: str | None = None) -> None:
         EventRecordFactory(
             data_source=data_source,
             category="sleep",
@@ -526,7 +526,23 @@ class TestGetSleepEndDates:
             start_datetime=end - timedelta(hours=8),
             end_datetime=end,
             duration_seconds=8 * 3600,
+            zone_offset=zone_offset,
         )
+
+    def test_dates_by_local_wake_up_date(self, db: Session, event_repo: EventRecordRepository) -> None:
+        user = UserFactory()
+        polar = DataSourceFactory(user=user, provider=ProviderName.POLAR, source=None)
+        # 01:00 local in UTC+3 is the evening before in UTC
+        self._sleep(polar, datetime(2026, 9, 4, 22, 0, tzinfo=timezone.utc), "+03:00")
+        # 20:00 local in UTC-8 is the next morning in UTC
+        self._sleep(polar, datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc), "-08:00")
+        # Window edges are local dates too: in on 2026-09-01, out on 2026-09-08
+        self._sleep(polar, datetime(2026, 8, 31, 22, 30, tzinfo=timezone.utc), "+02:00")
+        self._sleep(polar, datetime(2026, 9, 7, 23, 0, tzinfo=timezone.utc), "+02:00")
+
+        dates = event_repo.get_sleep_end_dates(db, user.id, "polar", date(2026, 9, 1), date(2026, 9, 7))
+
+        assert dates == {date(2026, 9, 5), date(2026, 9, 2), date(2026, 9, 1)}
 
     def test_matches_provider_when_source_is_empty(self, db: Session, event_repo: EventRecordRepository) -> None:
         user = UserFactory()

@@ -65,6 +65,24 @@ class TestPolar247SleepNormalization:
         assert record.end_datetime.isoformat() == "2024-01-15T07:00:00+02:00"
         assert record.duration_seconds == 8 * 3600
 
+    @pytest.mark.parametrize(
+        ("end_time", "expected"),
+        [
+            ("2024-01-15T07:00:00+02:00", "+02:00"),
+            ("2024-01-15T07:00:00-05:30", "-05:30"),
+            ("2024-01-15T07:00:00+00:00", "+00:00"),
+            ("2024-01-15T07:00:00", None),
+        ],
+    )
+    def test_zone_offset_kept_from_end_time(
+        self, data_247: Polar247Data, sample_sleep: dict, end_time: str, expected: str | None
+    ) -> None:
+        sample_sleep["sleep_start_time"] = end_time.replace("2024-01-15T07", "2024-01-14T23")
+        sample_sleep["sleep_end_time"] = end_time
+        record, _, _, _ = data_247.normalize_sleep([sample_sleep], uuid4())[0]
+
+        assert record.zone_offset == expected
+
     def test_sleep_stage_minutes(self, data_247: Polar247Data, sample_sleep: dict) -> None:
         user_id = uuid4()
         _, detail, _, _ = data_247.normalize_sleep([sample_sleep], user_id)[0]
@@ -710,6 +728,45 @@ class TestPolar247LateSleepNights:
 
         assert fetched == ["/v3/users/sleep/2026-09-07"]
         self.probe.assert_not_called()
+
+
+class TestPolar247LateSleepNightEastOfUtc:
+    """Polar dates a night by local wake-up date, which can be a day after the UTC date."""
+
+    def test_stored_night_waking_before_midnight_utc_is_not_refetched(
+        self, db: Session, data_247: Polar247Data
+    ) -> None:
+        user = UserFactory()
+        # Woke at 01:00 local in UTC+3, i.e. 22:00 UTC the day before
+        night = {
+            "date": "2026-09-05",
+            "sleep_start_time": "2026-09-04T17:00:00+03:00",
+            "sleep_end_time": "2026-09-05T01:00:00+03:00",
+            "light_sleep": 14400,
+            "deep_sleep": 5400,
+            "rem_sleep": 7200,
+        }
+        with patch.object(data_247, "get_sleep_data", return_value=[night]):
+            data_247._save_sleep(
+                db, user.id, datetime(2026, 9, 5, tzinfo=timezone.utc), datetime(2026, 9, 5, 8, tzinfo=timezone.utc)
+            )
+        db.commit()
+
+        fetched: list[str] = []
+
+        def fake_request(db: object, user_id: object, endpoint: str, **kwargs: object) -> dict:
+            fetched.append(endpoint)
+            return {}
+
+        with (
+            patch.object(data_247, "_get_available_sleep_dates", return_value={date(2026, 9, 5)}),
+            patch.object(data_247, "_make_api_request", side_effect=fake_request),
+        ):
+            data_247.get_sleep_data(
+                db, user.id, datetime(2026, 9, 9, 2, tzinfo=timezone.utc), datetime(2026, 9, 9, 8, tzinfo=timezone.utc)
+            )
+
+        assert fetched == []
 
 
 class TestPolar247SleepScoreAfterMerge:
