@@ -59,6 +59,7 @@ from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.raw_payload_storage import store_raw_payload
 from app.services.timeseries_service import timeseries_service
+from app.utils.dates import offset_to_iso
 from app.utils.sentry_helpers import log_and_capture_error
 from app.utils.structured_logging import log_structured
 
@@ -183,6 +184,11 @@ class Polar247Data(Base247DataTemplate):
             result.append((datetime.combine(current_date, t, tzinfo=anchor.tzinfo), val))
             prev_t = t
         return result
+
+    @staticmethod
+    def _zone_offset(dt: datetime) -> str | None:
+        offset = dt.utcoffset()
+        return offset_to_iso(int(offset.total_seconds())) if offset is not None else None
 
     def _parse(self, raw: dict[str, Any], schema: type[_T], user_id: UUID, context: str) -> _T | None:
         try:
@@ -324,6 +330,9 @@ class Polar247Data(Base247DataTemplate):
                 duration_seconds=duration_seconds,
                 start_datetime=start_dt,
                 end_datetime=end_dt,
+                # Polar gives local times with an offset; keeping it dates the night
+                # by its local wake-up date, the same way /sleep/available does.
+                zone_offset=self._zone_offset(end_dt),
                 provider=ProviderName.POLAR,
                 user_id=user_id,
             )
