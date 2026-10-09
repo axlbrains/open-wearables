@@ -1,5 +1,5 @@
 import contextlib
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from uuid import UUID
 
@@ -140,21 +140,33 @@ class EventRecordRepository(
         start_date: date,
         end_date: date,
     ) -> set[date]:
-        """Dates (by wake-up / end_datetime) that already have a sleep record for the provider.
+        """Local wake-up dates that already have a sleep record for the provider.
+
+        Dated like Polar's ``/sleep/available``: by the local calendar date of
+        ``end_datetime``. A row without ``zone_offset`` falls back to its UTC date.
 
         Providers that label a night by its wake-up date (Polar) use this to skip
         re-fetching nights that were already ingested. Filters by
         ``DataSource.provider`` — ``source`` is empty for pull-ingested Polar rows.
         """
+        local_end_date = cast(
+            self.model.end_datetime + cast(func.coalesce(self.model.zone_offset, "+00:00"), Interval),
+            Date,
+        )
+        # Offsets stay within a day, so a one-day margin on the UTC bounds keeps the
+        # index-friendly range filter without losing any row whose local date is in range.
         rows = (
-            db_session.query(func.date(self.model.end_datetime))
+            db_session.query(local_end_date)
             .join(DataSource, self.model.data_source_id == DataSource.id)
             .filter(
                 DataSource.user_id == user_id,
                 DataSource.provider == provider,
                 self.model.category == "sleep",
-                self.model.end_datetime >= datetime.combine(start_date, datetime.min.time()),
-                self.model.end_datetime < datetime.combine(end_date + timedelta(days=1), datetime.min.time()),
+                self.model.end_datetime
+                >= datetime.combine(start_date - timedelta(days=1), time.min, tzinfo=timezone.utc),
+                self.model.end_datetime < datetime.combine(end_date + timedelta(days=2), time.min, tzinfo=timezone.utc),
+                local_end_date >= start_date,
+                local_end_date <= end_date,
             )
             .all()
         )
