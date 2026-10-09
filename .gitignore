@@ -191,3 +191,6 @@ tfplan-*
 
 # Exception: AI tool configs that should be tracked
 !.gemini/settings.json
+# Locally checked-out extensions
+extensions/*
+!extensions/.gitkeep

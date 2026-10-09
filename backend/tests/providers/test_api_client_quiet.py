@@ -30,7 +30,7 @@ def _call(response: httpx.Response, **kwargs: object) -> object:
     client = MagicMock()
     client.__enter__.return_value.request.return_value = response
     with (
-        patch("app.services.providers.api_client._get_valid_token", return_value="tok"),
+        patch("app.services.providers.api_client.get_valid_token", return_value="tok"),
         patch("app.services.providers.api_client.httpx.Client", return_value=client),
         patch("app.services.providers.api_client.log_structured") as mock_log,
     ):

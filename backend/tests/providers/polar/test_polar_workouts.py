@@ -477,6 +477,8 @@ class TestPolarWorkoutsAPIRequests:
 class TestPolarWorkoutsDataLoading:
     """Tests for loading workout data from Polar API."""
 
+    # The fork also downloads the exercise's FIT file; tests have no network.
+    @patch("app.services.providers.polar.workouts.PolarWorkouts._ingest_fit")
     @patch("app.services.providers.templates.base_workouts.make_authenticated_request")
     @patch("app.services.event_record_service.event_record_service.create")
     @patch("app.services.event_record_service.event_record_service.create_detail")
@@ -485,6 +487,7 @@ class TestPolarWorkoutsDataLoading:
         mock_create_detail: MagicMock,
         mock_create: MagicMock,
         mock_request: MagicMock,
+        mock_ingest_fit: MagicMock,
         db: Session,
         sample_polar_exercise: dict,
     ) -> None:
