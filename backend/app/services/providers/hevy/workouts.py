@@ -37,6 +37,24 @@ _PAGE_SIZE = 10
 _MAX_PAGES = 1000
 
 
+def _parse_events_page(response: Any) -> tuple[list[dict[str, Any]], int]:
+    """The events and page count of one /v1/workouts/events page.
+
+    Raises on any shape it cannot trust (not an object, ``events`` not a list of
+    objects, ``page_count`` not a whole number), so a garbled page fails the sync
+    like a failed request does instead of reading as "nothing changed".
+    """
+    if not isinstance(response, dict):
+        raise ValueError(f"expected a JSON object, got {type(response).__name__}")
+    page_events = response.get("events") or []
+    if not isinstance(page_events, list) or not all(isinstance(event, dict) for event in page_events):
+        raise ValueError("'events' is not a list of objects")
+    raw_count = response.get("page_count") or 1
+    if isinstance(raw_count, bool) or not isinstance(raw_count, (int, str)):
+        raise ValueError(f"'page_count' is not an integer: {raw_count!r}")
+    return page_events, int(raw_count)
+
+
 def _event_time(event: dict[str, Any]) -> datetime | None:
     """When the event happened: the workout's updated_at, or the deletion time."""
     raw = event.get("deleted_at")
@@ -179,6 +197,7 @@ class HevyWorkouts(BaseWorkoutsTemplate):
                         "pageSize": _PAGE_SIZE,
                     },
                 )
+                page_events, page_count = _parse_events_page(response)
             except Exception as e:
                 log_structured(
                     self.logger,
@@ -188,9 +207,7 @@ class HevyWorkouts(BaseWorkoutsTemplate):
                     task="get_workout_events",
                 )
                 raise IncompleteSyncError(f"Hevy events page {page} failed: {e}") from e
-            page_events = response.get("events", []) if isinstance(response, dict) else []
             events.extend(page_events)
-            page_count = int(response.get("page_count") or 1) if isinstance(response, dict) else 1
             if page >= page_count or not page_events:
                 break
             page += 1

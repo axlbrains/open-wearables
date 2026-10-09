@@ -137,6 +137,46 @@ class TestGetWorkoutEvents:
         ):
             workouts.get_workout_events(MagicMock(), uuid4(), since=datetime(2026, 8, 1, tzinfo=timezone.utc))
 
+    @pytest.mark.parametrize(
+        "garbled",
+        [
+            {"page": 2, "page_count": "two", "events": []},
+            {"page": 2, "page_count": 2.5, "events": []},
+            {"page": 2, "page_count": 3, "events": "nope"},
+            {"page": 2, "page_count": 3, "events": ["not-an-object"]},
+            ["not", "an", "object"],
+        ],
+    )
+    def test_a_garbled_page_fails_the_whole_fetch(self, workouts: HevyWorkouts, garbled: object) -> None:
+        """A page that cannot be read must hold the cursor like a failed request, not read as empty."""
+        pages = [self._response(1, 3, [{"type": "updated", "workout": _workout_payload()}]), garbled]
+        with (
+            patch.object(workouts, "_make_api_request", side_effect=pages),
+            pytest.raises(IncompleteSyncError, match="page 2"),
+        ):
+            workouts.get_workout_events(MagicMock(), uuid4(), since=datetime(2026, 8, 1, tzinfo=timezone.utc))
+
+    def test_a_garbled_page_fails_load_data(self, workouts: HevyWorkouts) -> None:
+        with (
+            patch.object(workouts, "_make_api_request", return_value={"page_count": "x", "events": []}),
+            pytest.raises(IncompleteSyncError),
+        ):
+            workouts.load_data(MagicMock(), uuid4(), start="2026-08-01T00:00:00Z")
+
+    def test_lenient_where_the_feed_is_unambiguous(self, workouts: HevyWorkouts) -> None:
+        """A numeric-string page_count is read, and an empty or missing events list just ends paging."""
+        pages = [
+            {"page": 1, "page_count": "2", "events": [{"type": "updated", "workout": _workout_payload()}]},
+            {"page": 2},
+        ]
+        with patch.object(workouts, "_make_api_request", side_effect=pages) as mock_request:
+            updated, deleted = workouts.get_workout_events(
+                MagicMock(), uuid4(), since=datetime(2026, 8, 1, tzinfo=timezone.utc)
+            )
+        assert len(updated) == 1
+        assert deleted == []
+        assert mock_request.call_count == 2
+
 
 def _updated(workout_id: str, updated_at: str, title: str = "Push Day") -> dict:
     return {"type": "updated", "workout": _workout_payload(id=workout_id, updated_at=updated_at, title=title)}
