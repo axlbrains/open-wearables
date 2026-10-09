@@ -185,7 +185,9 @@ class ImportService:
                 duration = int((wjson.endDate - wjson.startDate).total_seconds())
 
             if "moving_time_seconds" not in metrics and provider == ProviderName.HEALTH_CONNECT:
-                moving_time = health_connect_moving_time(wjson.segments, int(duration))
+                # Elapsed, not the duration statistic: pauses are subtracted from it.
+                elapsed = int((wjson.endDate - wjson.startDate).total_seconds())
+                moving_time = health_connect_moving_time(wjson.segments, elapsed)
                 if moving_time is not None:
                     metrics["moving_time_seconds"] = moving_time
 

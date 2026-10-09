@@ -1291,6 +1291,41 @@ class TestHealthConnectWorkoutFields:
 
         assert detail.moving_time_seconds is None
 
+    def test_pauses_are_subtracted_from_elapsed_time_not_the_duration_statistic(
+        self, import_service: ImportService
+    ) -> None:
+        """A 60 min session with a 50 min duration statistic and a 10 min pause moved for 50 min."""
+        detail = self._detail(
+            import_service,
+            values=[{"type": "duration", "value": 3000, "unit": "s"}],
+            segments=[self._segment("13:00", "13:10", "other_39")],
+        )
+
+        assert detail.moving_time_seconds == 50 * 60
+
+    def test_segment_with_mixed_offset_awareness_is_ignored(self, import_service: ImportService) -> None:
+        detail = self._detail(
+            import_service,
+            segments=[
+                {"startDate": "2026-09-18T13:14:00", "endDate": "2026-09-18T13:41:00Z", "type": "running"},
+                self._segment("13:00", "13:10", "running"),
+            ],
+        )
+
+        assert detail.moving_time_seconds == 10 * 60
+
+    def test_segment_without_a_type_is_not_counted_as_active(self, import_service: ImportService) -> None:
+        detail = self._detail(
+            import_service,
+            segments=[
+                {"startDate": "2026-09-18T13:14:00Z", "endDate": "2026-09-18T13:41:00Z"},
+                {"startDate": "2026-09-18T13:00:00Z", "endDate": "2026-09-18T13:05:00Z", "type": None},
+                self._segment("12:50", "13:00", "rest"),
+            ],
+        )
+
+        assert detail.moving_time_seconds == 50 * 60
+
     def test_apple_segments_are_not_interpreted(self, import_service: ImportService) -> None:
         detail = self._detail(import_service, provider="apple", segments=[self._segment("13:14", "13:41", "running")])
 
