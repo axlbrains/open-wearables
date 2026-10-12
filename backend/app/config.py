@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     log_format: LogFormat = LogFormat.LEGACY
     # None keeps the per-logger defaults (stdlib INFO, log_structured unfiltered).
     log_level: LogLevel | None = None
+    # Export logs over OTLP/HTTP as well (needs the `otel` extra). Endpoint, headers and
+    # resource come from the standard OTEL_* variables; OTEL_SDK_DISABLED=true also turns it off.
+    otel_enabled: bool = False
+    # Comma-separated attribute names, added to the built-in list, whose values are
+    # replaced with "REDACTED" in exported logs. Matching ignores case.
+    otel_export_redact_keys: str = ""
 
     # DATABASE SETTINGS
     db_host: str = "db"
@@ -159,6 +165,9 @@ class Settings(BaseSettings):
     # not the whole run: the sweep leaves anything still reporting in Redis alone.
     sync_run_stale_after_hours: int = Field(2, ge=1)
     sync_run_sweep_interval_seconds: int = Field(1800, ge=60)
+    # A user's sync.completed events within this window reach extensions as one task.
+    extension_event_debounce_seconds: int = Field(300, ge=0)
+    extension_event_sweep_interval_seconds: int = Field(60, ge=10)
 
     # API SETTINGS
     api_base_url: str = "http://localhost:8000"
@@ -525,6 +534,9 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def _get_settings() -> Settings:
+    # Tests set this so a developer's local config/.env can't change test behaviour
+    if os.environ.get("OW_IGNORE_ENV_FILE"):
+        return Settings(_env_file=None)
     return Settings()
 
 
