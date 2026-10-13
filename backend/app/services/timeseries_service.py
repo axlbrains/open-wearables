@@ -1,4 +1,3 @@
-import threading
 from collections import defaultdict
 from datetime import datetime
 from decimal import Decimal
@@ -131,15 +130,14 @@ class TimeSeriesService(
         counts = self.crud.bulk_create(db_session, samples)  # ty:ignore[invalid-argument-type]
         samples_copy = list(samples)
 
+        # Enqueued inline after commit, not from a background thread: emitting only
+        # creates tasks (the Svix call runs in EMIT_WEBHOOK_EVENT), and Cloud Run with
+        # request-based CPU starves threads that outlive the request.
         @sa_event.listens_for(db_session, "after_commit", once=True)
-        def _start_webhook_thread(session: DbSession) -> None:  # noqa: ARG001
+        def _emit_webhooks_after_commit(session: DbSession) -> None:  # noqa: ARG001
             if not svix_service.is_enabled():
                 return
-            threading.Thread(
-                target=self._emit_timeseries_webhooks,
-                args=(samples_copy,),
-                daemon=True,
-            ).start()
+            self._emit_timeseries_webhooks(samples_copy)
 
         return counts
 

@@ -54,5 +54,7 @@ module "open_wearables_stack" {
   backend_worker_min_instances      = var.backend_worker_min_instances
   frontend_min_instances            = var.frontend_min_instances
   backend_worker_resource_limits    = var.backend_worker_resource_limits
+  backend_api_cpu_idle              = var.backend_api_cpu_idle
+  backend_worker_cpu_idle           = var.backend_worker_cpu_idle
   backend_vpc_egress                = var.backend_vpc_egress
 }

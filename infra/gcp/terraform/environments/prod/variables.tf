@@ -369,3 +369,15 @@ variable "backend_vpc_egress" {
   type        = string
   default     = "ALL_TRAFFIC"
 }
+
+variable "backend_api_cpu_idle" {
+  description = "Request-based CPU (cpu_idle=true) for the API service. Only safe while no work runs after a response."
+  type        = bool
+  default     = false
+}
+
+variable "backend_worker_cpu_idle" {
+  description = "Request-based CPU (cpu_idle=true) for the worker service. Only safe while no work runs after a response."
+  type        = bool
+  default     = false
+}

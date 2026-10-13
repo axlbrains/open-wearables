@@ -328,13 +328,10 @@ def emit(event: SyncStatusEvent) -> None:
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Failed to emit sync status event: %s", exc, exc_info=True)
 
-    # Dispatch outgoing webhooks in a background thread so the Svix HTTP
-    # round-trip (~2 s) does not block the Celery task or inflate sync duration.
-    threading.Thread(
-        target=_maybe_dispatch_outgoing_webhook,
-        args=(event,),
-        daemon=True,
-    ).start()
+    # Enqueue the outgoing webhook inline, not from a background thread: it only
+    # creates a task (the Svix call runs in EMIT_WEBHOOK_EVENT), and Cloud Run with
+    # request-based CPU starves threads that outlive the request.
+    _maybe_dispatch_outgoing_webhook(event)
 
 
 def _maybe_dispatch_outgoing_webhook(event: SyncStatusEvent) -> None:

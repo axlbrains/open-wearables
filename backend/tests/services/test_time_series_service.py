@@ -10,6 +10,7 @@ Tests cover:
 """
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -125,6 +126,34 @@ class TestTimeSeriesServiceBulkCreateSamples:
         # Assert
         total_count = timeseries_service.get_total_count(db)
         assert total_count >= initial_count + 2
+
+    @patch("app.services.timeseries_service.on_timeseries_batch_saved")
+    @patch("app.services.timeseries_service.svix_service.is_enabled", return_value=True)
+    def test_webhooks_are_enqueued_inline_on_commit(
+        self, enabled: MagicMock, mock_emit: MagicMock, db: Session
+    ) -> None:
+        """Webhooks are enqueued before commit() returns, not from a thread that outlives
+        the request: Cloud Run with request-based CPU starves such threads."""
+        user = UserFactory()
+        DataSourceFactory(source="apple", device_model="device_1")
+        samples = [
+            HeartRateSampleCreate(
+                id=uuid4(),
+                user_id=user.id,
+                provider_name="apple",
+                device_model="device_1",
+                recorded_at=datetime.now(timezone.utc),
+                value=70,
+                series_type=SeriesType.heart_rate,
+            )
+        ]
+
+        timeseries_service.bulk_create_samples(db, samples)
+        mock_emit.assert_not_called()
+        db.commit()
+
+        mock_emit.assert_called_once()
+        assert mock_emit.call_args.kwargs["sample_count"] == 1
 
 
 class TestTimeSeriesServiceGetDailyHistogram:
