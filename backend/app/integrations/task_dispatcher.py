@@ -53,6 +53,7 @@ class RegisteredTask(str, Enum):
     CLOSE_STALE_SYNC_RUNS = "close_stale_sync_runs"
     RENEW_OURA_WEBHOOKS = "renew_oura_webhooks"
     RECONCILE_PROVIDER_WEBHOOKS = "reconcile_provider_webhooks"
+    DELETE_USER_WEBHOOK_PAYLOADS = "delete_user_webhook_payloads"
 
 
 @dataclass(frozen=True)
@@ -186,6 +187,10 @@ TASK_DEFINITIONS: dict[RegisteredTask, TaskDefinition] = {
         task_name="app.integrations.celery.tasks.provider_webhooks_task.reconcile_provider_webhooks",
         callable_path="app.integrations.celery.tasks.provider_webhooks_task.reconcile_provider_webhooks",
         celery_queue="webhook_sync",
+    ),
+    RegisteredTask.DELETE_USER_WEBHOOK_PAYLOADS: TaskDefinition(
+        task_name="app.integrations.celery.tasks.delete_user_webhook_payloads_task.delete_user_webhook_payloads",
+        callable_path="app.integrations.celery.tasks.delete_user_webhook_payloads_task.delete_user_webhook_payloads",
     ),
 }
 
