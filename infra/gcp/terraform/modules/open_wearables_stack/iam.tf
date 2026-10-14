@@ -1,4 +1,7 @@
 locals {
+  # The instance cloudsql.client is pinned to: the one the services actually connect to.
+  iam_sql_instance_name = var.cloud_sql_runtime_connection_name != null ? element(split(":", var.cloud_sql_runtime_connection_name), 2) : local.cloud_sql_instance_name
+
   service_account_role_pairs = flatten([
     for account_key, roles in var.service_account_project_roles : [
       for role in roles : {
@@ -19,13 +22,13 @@ resource "google_project_iam_member" "service_account_roles" {
 
   # cloudsql.client is project-wide by default, which let each stack's SAs open
   # every other instance in the project (test could reach prod's DB). Pin it to
-  # this stack's own instance.
+  # the instance this stack's services connect to.
   dynamic "condition" {
-    for_each = each.value.role == "roles/cloudsql.client" && local.cloud_sql_instance_name != null ? [1] : []
+    for_each = each.value.role == "roles/cloudsql.client" && local.iam_sql_instance_name != null ? [1] : []
     content {
-      title       = "only-${local.cloud_sql_instance_name}"
+      title       = "only-${local.iam_sql_instance_name}"
       description = "Cloud SQL access limited to this stack's instance"
-      expression  = "resource.name == \"projects/${var.project_id}/instances/${local.cloud_sql_instance_name}\" && resource.service == \"sqladmin.googleapis.com\""
+      expression  = "resource.name == \"projects/${var.project_id}/instances/${local.iam_sql_instance_name}\" && resource.service == \"sqladmin.googleapis.com\""
     }
   }
 
