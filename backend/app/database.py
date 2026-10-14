@@ -40,7 +40,7 @@ from app.utils.mappings_meta import AutoRelMeta
 # than the original db-f1-micro era 2+3 pool — that was sized for a
 # 25-conn DB.
 #
-# pool_size=5, max_overflow=30 ⇒ ≤ 35 conns per engine ⇒ ≤ 70 per
+# Defaults (DB_POOL_SIZE / DB_MAX_OVERFLOW): pool_size=5, max_overflow=30 ⇒ ≤ 35 conns per engine ⇒ ≤ 70 per
 # instance.  At 100-conn DB that's headroom for one warm instance to
 # absorb axl-api fan-out bursts (Promise.all × 6 active users × 4
 # endpoints) without serialising on pool waits.  See OW issue #13.
@@ -61,8 +61,8 @@ _PG_CONNECT_ARGS = {"options": "-c statement_timeout=30000"}
 engine = create_engine(
     settings.db_uri,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=30,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
     pool_timeout=10,
     pool_recycle=300,
     connect_args=_PG_CONNECT_ARGS,
@@ -70,8 +70,8 @@ engine = create_engine(
 async_engine = create_async_engine(
     settings.db_uri,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=30,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
     pool_timeout=10,
     pool_recycle=300,
     connect_args=_PG_CONNECT_ARGS,

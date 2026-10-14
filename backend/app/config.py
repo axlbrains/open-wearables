@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     db_user: str = "open-wearables"
     db_password: SecretStr = SecretStr("open-wearables")
     db_socket_path: str | None = None
+    # Per-engine pool size (there are two engines per process, sync and async). Prod
+    # shares a 50-connection Cloud SQL instance with axl-api, so it runs much smaller
+    # pools than these defaults (DB_POOL_SIZE / DB_MAX_OVERFLOW in the Cloud Run env).
+    db_pool_size: int = Field(5, ge=1)
+    db_max_overflow: int = Field(30, ge=0)
 
     # Sentry
     SENTRY_ENABLED: bool = False

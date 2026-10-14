@@ -836,3 +836,15 @@ variable "backend_worker_cpu_idle" {
   type        = bool
   default     = false
 }
+
+variable "cloud_sql_runtime_connection_name" {
+  description = "Cloud SQL connection name (project:region:instance) the services connect to, when it is not the stack's own instance."
+  type        = string
+  default     = null
+}
+
+variable "cloud_sql_db_password_secret" {
+  description = "Secret Manager secret holding DB_PASSWORD. When set, the password reaches the services as a secret ref instead of a plain env value."
+  type        = string
+  default     = null
+}

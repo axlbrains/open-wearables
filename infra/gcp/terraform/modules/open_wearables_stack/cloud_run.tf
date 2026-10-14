@@ -29,14 +29,25 @@ locals {
   backend_init_job_name_resolved       = coalesce(var.backend_init_job_name, "${local.resource_prefix}-init")
   frontend_service_name_resolved       = coalesce(var.frontend_service_name, "${local.resource_prefix}-frontend")
 
+  # The instance the services connect to. Normally the stack's own; set
+  # cloud_sql_runtime_connection_name to point them at another instance (OW moved onto
+  # the shared axl-postgres on 2026-10-14) while the stack keeps managing its own.
+  runtime_sql_connection_name = var.cloud_sql_runtime_connection_name != null ? var.cloud_sql_runtime_connection_name : local.cloud_sql_connection_name
+
+  # DB_PASSWORD comes from Secret Manager when cloud_sql_db_password_secret is set, and
+  # is then left out of the plain env (Cloud Run rejects a name set both ways).
+  db_password_secret_env = var.cloud_sql_db_password_secret != null ? {
+    DB_PASSWORD = { secret = var.cloud_sql_db_password_secret, version = "latest" }
+  } : {}
+
   backend_runtime_env = merge(
-    local.cloud_sql_connection_name != null ? merge(
+    local.runtime_sql_connection_name != null ? merge(
       {
         DB_NAME        = var.cloud_sql_db_name
         DB_USER        = var.cloud_sql_db_user
-        DB_SOCKET_PATH = "/cloudsql/${local.cloud_sql_connection_name}"
+        DB_SOCKET_PATH = "/cloudsql/${local.runtime_sql_connection_name}"
       },
-      var.cloud_sql_db_password != null ? { DB_PASSWORD = var.cloud_sql_db_password } : {}
+      var.cloud_sql_db_password != null && var.cloud_sql_db_password_secret == null ? { DB_PASSWORD = var.cloud_sql_db_password } : {}
     ) : {},
     local.redis_host != null ? {
       REDIS_HOST = local.redis_host
@@ -104,11 +115,11 @@ resource "google_cloud_run_v2_service" "backend_api" {
     }
 
     dynamic "volumes" {
-      for_each = local.cloud_sql_connection_name != null ? [1] : []
+      for_each = local.runtime_sql_connection_name != null ? [1] : []
       content {
         name = "cloudsql"
         cloud_sql_instance {
-          instances = [local.cloud_sql_connection_name]
+          instances = [local.runtime_sql_connection_name]
         }
       }
     }
@@ -148,7 +159,7 @@ resource "google_cloud_run_v2_service" "backend_api" {
       }
 
       dynamic "env" {
-        for_each = var.backend_api_secret_env
+        for_each = merge(var.backend_api_secret_env, local.db_password_secret_env)
         content {
           name = env.key
           value_source {
@@ -161,7 +172,7 @@ resource "google_cloud_run_v2_service" "backend_api" {
       }
 
       dynamic "volume_mounts" {
-        for_each = local.cloud_sql_connection_name != null ? [1] : []
+        for_each = local.runtime_sql_connection_name != null ? [1] : []
         content {
           name       = "cloudsql"
           mount_path = "/cloudsql"
@@ -212,11 +223,11 @@ resource "google_cloud_run_v2_service" "backend_worker" {
     }
 
     dynamic "volumes" {
-      for_each = local.cloud_sql_connection_name != null ? [1] : []
+      for_each = local.runtime_sql_connection_name != null ? [1] : []
       content {
         name = "cloudsql"
         cloud_sql_instance {
-          instances = [local.cloud_sql_connection_name]
+          instances = [local.runtime_sql_connection_name]
         }
       }
     }
@@ -253,7 +264,7 @@ resource "google_cloud_run_v2_service" "backend_worker" {
       }
 
       dynamic "env" {
-        for_each = var.backend_worker_secret_env
+        for_each = merge(var.backend_worker_secret_env, local.db_password_secret_env)
         content {
           name = env.key
           value_source {
@@ -266,7 +277,7 @@ resource "google_cloud_run_v2_service" "backend_worker" {
       }
 
       dynamic "volume_mounts" {
-        for_each = local.cloud_sql_connection_name != null ? [1] : []
+        for_each = local.runtime_sql_connection_name != null ? [1] : []
         content {
           name       = "cloudsql"
           mount_path = "/cloudsql"
@@ -308,11 +319,11 @@ resource "google_cloud_run_v2_job" "backend_init" {
       max_retries     = 1
 
       dynamic "volumes" {
-        for_each = local.cloud_sql_connection_name != null ? [1] : []
+        for_each = local.runtime_sql_connection_name != null ? [1] : []
         content {
           name = "cloudsql"
           cloud_sql_instance {
-            instances = [local.cloud_sql_connection_name]
+            instances = [local.runtime_sql_connection_name]
           }
         }
       }
@@ -343,7 +354,7 @@ resource "google_cloud_run_v2_job" "backend_init" {
         }
 
         dynamic "env" {
-          for_each = var.backend_init_secret_env
+          for_each = merge(var.backend_init_secret_env, local.db_password_secret_env)
           content {
             name = env.key
             value_source {
@@ -356,7 +367,7 @@ resource "google_cloud_run_v2_job" "backend_init" {
         }
 
         dynamic "volume_mounts" {
-          for_each = local.cloud_sql_connection_name != null ? [1] : []
+          for_each = local.runtime_sql_connection_name != null ? [1] : []
           content {
             name       = "cloudsql"
             mount_path = "/cloudsql"
