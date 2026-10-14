@@ -13,6 +13,10 @@ from celery import shared_task
 from fastapi import HTTPException
 
 from app.database import SessionLocal
+from app.integrations.celery.tasks.garmin.backfill_timeout import (
+    _classify_chain_stop_error,
+    _finalize_chain_stop,
+)
 from app.integrations.redis_client import get_redis_client
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.models import User
@@ -48,11 +52,6 @@ logger = getLogger(__name__)
 @shared_task
 def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
     """Trigger backfill for a specific data type."""
-    from app.integrations.celery.tasks.garmin.backfill_timeout import (
-        _classify_chain_stop_error,
-        _finalize_chain_stop,
-    )
-
     if data_type not in BACKFILL_DATA_TYPES:
         return {"error": f"Invalid data type: {data_type}"}
 

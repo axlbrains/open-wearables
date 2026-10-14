@@ -19,6 +19,7 @@ from app.services.outgoing_webhooks import svix as svix_service
 
 logger = logging.getLogger(__name__)
 
+
 # Maximum number of samples included in a single Svix message.
 # At ~200 bytes per serialised sample, 2 500 samples ≈ 500 KB — well within
 # Svix's 1 MB payload limit.  Batches larger than this are split into

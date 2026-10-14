@@ -18,6 +18,7 @@ from app.models import (
     HealthScore,
     MealDetails,
     MenstrualCycleDetails,
+    ProviderPriority,
     SleepDetails,
     WorkoutDetails,
 )
@@ -27,7 +28,9 @@ from app.repositories import (
     EventRecordDetailRepository,
     EventRecordRepository,
     HealthScoreRepository,
+    ProviderPriorityRepository,
 )
+from app.repositories.device_type_priority_repository import DeviceTypePriorityRepository
 from app.schemas.enums import HealthScoreCategory, SeriesType, get_series_type_unit
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
@@ -68,7 +71,6 @@ from app.services.outgoing_webhooks.events import (
     on_sleep_created,
     on_workout_created,
 )
-from app.services.priority_service import priority_service
 from app.services.scores.sleep_service import sleep_score_service
 from app.services.services import AppService
 from app.utils.conversion import as_dict_list, as_float, as_model, minutes_to_seconds
@@ -118,7 +120,8 @@ class EventRecordService(
         self.data_source_repo = DataSourceRepository()
         self.data_point_series_repo = DataPointSeriesRepository(DataPointSeries)
         self.health_score_repo = HealthScoreRepository(HealthScore)
-        self.priority_service = priority_service
+        self.provider_priority_repo = ProviderPriorityRepository(ProviderPriority)
+        self.device_type_priority_repo = DeviceTypePriorityRepository()
 
     def _resolve_avg_hr(
         self,
@@ -178,9 +181,9 @@ class EventRecordService(
         # Fire the webhook directly with fresh fetches rather than via after_commit — using
         # after_commit defers the call to the *next* session commit, at which point SQLAlchemy
         # has expired the captured ORM objects, causing lazy-load failures inside after_commit.
-        record = db_session.get(EventRecord, detail.record_id)
+        record = self.crud.get(db_session, detail.record_id)
         if record is not None and record.data_source_id is not None:
-            data_source = db_session.get(DataSource, record.data_source_id)
+            data_source = self.data_source_repo.get(db_session, record.data_source_id)
             if data_source is not None:
                 self._emit_event_record_webhook(record, data_source, detail)
 
@@ -737,13 +740,11 @@ class EventRecordService(
         if not record_ids:
             return
 
-        records = db_session.query(EventRecord).filter(EventRecord.id.in_(record_ids)).all()
+        records = self.crud.get_by_ids(db_session, record_ids)
         records_by_id = {r.id: r for r in records}
 
         data_source_ids = {r.data_source_id for r in records if r.data_source_id is not None}
-        data_sources = (
-            db_session.query(DataSource).filter(DataSource.id.in_(data_source_ids)).all() if data_source_ids else []
-        )
+        data_sources = self.data_source_repo.get_by_ids(db_session, data_source_ids)
         data_sources_by_id = {ds.id: ds for ds in data_sources}
 
         dispatches: list[tuple[EventRecord, DataSource, EventRecordDetailCreate]] = []
@@ -939,8 +940,8 @@ class EventRecordService(
 
     def _winning_sleep_ids(self, db_session: DbSession, user_id: UUID, params: EventRecordQueryParams) -> Query:
         """An inline subquery of the top-priority source's sessions per night."""
-        provider_order = self.priority_service.priority_repo.get_priority_order(db_session)
-        device_type_order = self.priority_service.device_type_priority_repo.get_priority_order(db_session)
+        provider_order = self.provider_priority_repo.get_priority_order(db_session)
+        device_type_order = self.device_type_priority_repo.get_priority_order(db_session)
         return self.crud.winning_sleep_record_ids(db_session, str(user_id), params, provider_order, device_type_order)
 
     @handle_exceptions

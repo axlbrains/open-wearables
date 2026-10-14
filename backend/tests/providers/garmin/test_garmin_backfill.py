@@ -298,9 +298,7 @@ class TestBackfillTaskStopChain:
     """
 
     TASK_MODULE = "app.integrations.celery.tasks.garmin.backfill_trigger"
-    ORCHESTRATOR_MODULE = "app.integrations.celery.tasks.garmin.backfill_task"
     TIMEOUT_MODULE = "app.integrations.celery.tasks.garmin.backfill_timeout"
-    BACKFILL_STATE_MODULE = "app.services.providers.garmin.backfill_state"
     USER_ID = "c079cf7e-70b3-4529-a325-401a658f5cba"
 
     @staticmethod
@@ -355,7 +353,7 @@ class TestBackfillTaskStopChain:
             patch(f"{self.TIMEOUT_MODULE}.mark_type_failed", shared_mark_failed),
             patch(f"{self.TIMEOUT_MODULE}.persist_window_results"),
             patch(f"{self.TIMEOUT_MODULE}.complete_backfill"),
-            patch(f"{self.BACKFILL_STATE_MODULE}.get_pending_types", return_value=["dailies", "activities"]),
+            patch(f"{self.TIMEOUT_MODULE}.get_pending_types", return_value=["dailies", "activities"]),
             patch(f"{self.TASK_MODULE}.dispatch_task") as mock_dispatch,
             patch(f"{self.TASK_MODULE}.get_redis_client", return_value=mock_redis),
             patch(f"{self.TASK_MODULE}.UserConnectionRepository") as mock_conn_repo_cls,

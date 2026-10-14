@@ -22,6 +22,7 @@ from app.services.timeseries_service import timeseries_service
 
 logger = getLogger(__name__)
 
+
 _CACHE_KEY = "dashboard:total_data_points"
 _FRESH_KEY = "dashboard:total_data_points:fresh"
 _LOCK_KEY = "dashboard:total_data_points:refreshing"

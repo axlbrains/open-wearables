@@ -315,7 +315,7 @@ class TestWebhookEmit:
         """With OUTGOING_WEBHOOKS_ENABLED off, nothing is enqueued."""
         with (
             patch("app.services.outgoing_webhooks.svix.is_enabled", return_value=False),
-            patch("app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event") as mock_task,
+            patch("app.integrations.task_dispatcher.dispatch_task") as mock_dispatch,
         ):
             on_connection_created(
                 user_id=uuid4(),
@@ -323,7 +323,7 @@ class TestWebhookEmit:
                 connection_id=uuid4(),
                 connected_at="2026-01-01T12:00:00+00:00",
             )
-            mock_task.delay.assert_not_called()
+            mock_dispatch.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

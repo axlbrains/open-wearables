@@ -20,6 +20,7 @@ from app.services.providers.garmin.backfill_state import (
     _get_key,
     complete_backfill,
     get_current_window,
+    get_pending_types,
     get_trace_id,
     get_type_skip_count,
     is_retry_phase,
@@ -69,8 +70,6 @@ def _classify_chain_stop_error(status_code: int | None, error_text: str) -> tupl
 
 def _finalize_chain_stop(user_id: str, current_window: int, error_msg: str) -> None:
     """Mark all pending types as failed and finalize the backfill."""
-    from app.services.providers.garmin.backfill_state import get_pending_types
-
     pending = get_pending_types(user_id)
     for pending_type in pending:
         mark_type_failed(user_id, pending_type, error_msg)

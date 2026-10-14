@@ -38,6 +38,7 @@ from app.utils.structured_logging import log_structured
 
 logger = getLogger(__name__)
 
+
 _STAGE_TO_METRIC: dict[str, str] = {
     "awake": "awake_seconds",
     "sleeping": "sleeping_seconds",
