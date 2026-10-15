@@ -53,3 +53,10 @@ echo 'Running Whoop cycle day re-key...'
 echo 'Running device type backfill...'
 /opt/venv/bin/python scripts/data_migrations/backfill_device_types.py \
     || echo "Warning: device type backfill failed — will retry on next run."
+
+# Upstream #1781: merges data sources split by placeholder models / platform names /
+# Polar's missing source, then drops events duplicated across a user's sources.
+# Recorded in data_migration after a clean run (#1864), so later inits skip it.
+echo 'Running data source merge...'
+/opt/venv/bin/python scripts/data_migrations/merge_duplicate_data_sources.py \
+    || echo "Warning: data source merge failed — will retry on next run."

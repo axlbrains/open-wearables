@@ -225,7 +225,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         metrics = self._build_metrics(raw_workout)
 
         source_name = raw_workout.device_name or "Strava"
-        device_model = raw_workout.device_name or ""
+        device_model = raw_workout.device_name or None
 
         record = EventRecordCreate(
             category="workout",
@@ -350,7 +350,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                 activity.id,
                 record.start_datetime,
                 record.zone_offset,
-                activity.device_name or "",
+                activity.device_name or None,
             )
         except HTTPException as exc:
             if exc.status_code == status.HTTP_404_NOT_FOUND:

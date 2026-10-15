@@ -1064,7 +1064,7 @@ wheels = [
 
 [[package]]
 name = "open-wearables"
-version = "0.9.26"
+version = "0.9.27"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
