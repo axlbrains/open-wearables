@@ -355,6 +355,15 @@ variable "frontend_min_instances" {
   default     = 0
 }
 
+variable "backend_api_resource_limits" {
+  description = "Resource limits for the API service. Two concurrent ~60k-record Health Connect SDK batches OOMed it at 512Mi on 2026-10-17 — prod runs 1Gi via TFVARS_PROD."
+  type        = map(string)
+  default = {
+    cpu    = "1000m"
+    memory = "512Mi"
+  }
+}
+
 variable "backend_worker_resource_limits" {
   description = "Resource limits for the worker service. Strava per-sample stream ingestion (INGEST_WORKOUT_SAMPLES) OOMed the worker at 1Gi on 2026-07-14 — prod runs 2Gi via TFVARS_PROD."
   type        = map(string)

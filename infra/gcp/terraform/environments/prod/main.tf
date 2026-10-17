@@ -53,6 +53,7 @@ module "open_wearables_stack" {
   backend_api_min_instances         = var.backend_api_min_instances
   backend_worker_min_instances      = var.backend_worker_min_instances
   frontend_min_instances            = var.frontend_min_instances
+  backend_api_resource_limits       = var.backend_api_resource_limits
   backend_worker_resource_limits    = var.backend_worker_resource_limits
   backend_api_cpu_idle              = var.backend_api_cpu_idle
   cloud_sql_runtime_connection_name = var.cloud_sql_runtime_connection_name
