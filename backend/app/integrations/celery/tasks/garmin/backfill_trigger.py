@@ -12,6 +12,7 @@ from uuid import UUID
 from celery import shared_task
 from fastapi import HTTPException
 
+from app.constants.celery_tasks import CeleryTask
 from app.database import SessionLocal
 from app.integrations.celery.tasks.garmin.backfill_timeout import (
     _classify_chain_stop_error,
@@ -49,7 +50,7 @@ from app.utils.structured_logging import log_structured
 logger = getLogger(__name__)
 
 
-@shared_task
+@shared_task(name=CeleryTask.GARMIN_TRIGGER_BACKFILL_FOR_TYPE)
 def trigger_backfill_for_type(user_id: str, data_type: str) -> dict[str, Any]:
     """Trigger backfill for a specific data type."""
     if data_type not in BACKFILL_DATA_TYPES:

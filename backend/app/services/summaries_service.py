@@ -229,6 +229,7 @@ class SummariesService:
                 SeriesType.steps,
                 SeriesType.active_energy,
                 SeriesType.basal_energy,
+                SeriesType.total_energy,
                 SeriesType.heart_rate,
                 SeriesType.distance_walking_running,
                 SeriesType.flights_climbed,
@@ -523,10 +524,10 @@ class SummariesService:
             db_session, user_id, page_start, page_end
         )
 
-        # Build lookup dict for workout data by (date, provider, device)
+        # Build lookup dict for workout data by (date, provider, source, device)
         workout_lookup: dict[tuple, dict] = {}
         for wa in workout_aggregates:
-            key = (wa["workout_date"], wa["source"], wa.get("device_model"))
+            key = (wa["workout_date"], wa["provider"], wa["source"], wa.get("device_model"))
             workout_lookup[key] = wa
 
         # Get active/sedentary minutes from step data
@@ -566,7 +567,9 @@ class SummariesService:
         for result in results:
             # Look up workout data for this day/provider/device
             result_key = (result["activity_date"], result["source"], result.get("device_model"))
-            workout_data = workout_lookup.get(result_key, {})
+            workout_data = workout_lookup.get(
+                (result["activity_date"], result.get("provider"), result["source"], result.get("device_model")), {}
+            )
             activity_data = activity_lookup.get(result_key, {})
             intensity_data = intensity_lookup.get(result_key, {})
 
@@ -602,9 +605,9 @@ class SummariesService:
             # not additive - providers report daily totals that include workout calories
             active_cal = result.get("active_energy_sum")
             basal_cal = result.get("basal_energy_sum")
-            total_cal = None
-            if active_cal is not None or basal_cal is not None:
-                total_cal = (active_cal or 0.0) + (basal_cal or 0.0)
+            total_cal = result.get("total_energy_sum")
+            if total_cal is None and active_cal is not None and basal_cal is not None:
+                total_cal = active_cal + basal_cal
 
             # Active minutes: prefer the provider-reported daily active time (Garmin
             # activeTimeInSeconds, Oura high+medium+low activity time, Polar active_duration).
@@ -627,7 +630,6 @@ class SummariesService:
                     vigorous=vigorous,
                 )
 
-            steps = result.get("steps_sum")
             summary = ActivitySummary(
                 date=result["activity_date"],
                 source=SourceMetadata(
@@ -636,7 +638,7 @@ class SummariesService:
                     device=result.get("device_model"),
                     device_type=result.get("device_type"),
                 ),
-                steps=steps if steps is not None else None,
+                steps=result.get("steps_sum"),
                 distance_meters=total_distance,
                 floors_climbed=floors_climbed,
                 elevation_meters=elevation_meters,
@@ -685,7 +687,38 @@ class SummariesService:
         """One row per day in [start, end): live and archived, best source per date."""
         results = self.data_point_repo.get_daily_activity_aggregates(db_session, user_id, start, end)
         results = self._merge_archive_activity(db_session, user_id, start, end, results)
+        results = self._add_workout_only_days(db_session, user_id, start, end, results)
         return self._filter_by_priority(db_session, user_id, results, date_key="activity_date")
+
+    def _add_workout_only_days(
+        self, db_session: DbSession, user_id: UUID, start: datetime, end: datetime, results: list
+    ) -> list:
+        """Add an empty row per source for dates that have workouts but no time-series data."""
+        covered = {r["activity_date"] for r in results}
+        extra = [
+            {
+                "activity_date": wa["workout_date"],
+                "provider": wa["provider"],
+                "source": wa["source"],
+                "device_model": wa["device_model"],
+                "device_type": wa["device_type"],
+                "steps_sum": None,
+                "active_energy_sum": None,
+                "basal_energy_sum": None,
+                "total_energy_sum": None,
+                "hr_avg": None,
+                "hr_max": None,
+                "hr_min": None,
+                "distance_sum": None,
+                "flights_climbed_sum": None,
+                "active_time_minutes": None,
+            }
+            for wa in self.event_record_repo.get_daily_workout_aggregates(db_session, user_id, start, end)
+            if wa["workout_date"] not in covered
+        ]
+        if not extra:
+            return results
+        return sorted([*results, *extra], key=lambda r: r["activity_date"])
 
     def _activity_page_days(
         self,

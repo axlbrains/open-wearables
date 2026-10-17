@@ -14,6 +14,7 @@ from uuid import UUID
 
 from celery import shared_task
 
+from app.constants.celery_tasks import CeleryTask
 from app.database import SessionLocal
 from app.integrations.idempotency import idempotent
 from app.integrations.redis_client import get_redis_client
@@ -109,7 +110,7 @@ def _release_shared_backfill_primary(user_id: str, *, overall_status: SyncStatus
     get_redis_client().delete(_get_key(user_id, "shared_provider_user_id"))
 
 
-@shared_task
+@shared_task(name=CeleryTask.GARMIN_START_FULL_BACKFILL)
 @idempotent(key=lambda user_id: f"start_garmin_backfill:{user_id}", ttl_seconds=3600)
 def start_full_backfill(user_id: str) -> dict[str, Any]:
     """Initialize and start full 30-day backfill for all backfill data types.
@@ -350,7 +351,7 @@ def start_full_backfill(user_id: str) -> dict[str, Any]:
     }
 
 
-@shared_task
+@shared_task(name=CeleryTask.GARMIN_TRIGGER_NEXT_PENDING_TYPE)
 def trigger_next_pending_type(user_id: str) -> dict[str, Any]:
     """Trigger the next pending data type in the backfill sequence.
 

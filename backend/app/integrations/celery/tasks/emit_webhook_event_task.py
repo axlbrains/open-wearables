@@ -14,6 +14,7 @@ from typing import Any
 
 from celery import shared_task
 
+from app.constants.celery_tasks import CeleryTask
 from app.database import SessionLocal
 from app.services import developer_service
 from app.services.outgoing_webhooks import svix as svix_service
@@ -22,7 +23,7 @@ logger = getLogger(__name__)
 
 
 @shared_task(
-    name="app.integrations.celery.tasks.emit_webhook_event_task.emit_webhook_event",
+    name=CeleryTask.EMIT_WEBHOOK_EVENT,
     acks_late=True,
 )
 def emit_webhook_event(

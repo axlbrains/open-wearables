@@ -50,6 +50,11 @@ echo 'Running Whoop cycle day re-key...'
 /opt/venv/bin/python scripts/data_migrations/rekey_whoop_cycle_days.py \
     || echo "Warning: Whoop cycle re-key failed — will retry on next run."
 
+# Upstream: Whoop cycle energy is total, not active (runs once, data_migration).
+echo 'Running Whoop active_energy->total_energy relabel...'
+/opt/venv/bin/python scripts/data_migrations/relabel_whoop_active_energy_to_total_energy.py \
+    || echo "Warning: Whoop energy relabel failed — will retry on next run."
+
 echo 'Running device type backfill...'
 /opt/venv/bin/python scripts/data_migrations/backfill_device_types.py \
     || echo "Warning: device type backfill failed — will retry on next run."
@@ -60,3 +65,14 @@ echo 'Running device type backfill...'
 echo 'Running data source merge...'
 /opt/venv/bin/python scripts/data_migrations/merge_duplicate_data_sources.py \
     || echo "Warning: data source merge failed — will retry on next run."
+
+# Upstream: clears the 0 kcal stored for SDK/XML workouts that reported no calories (once).
+echo 'Running SDK workout calories cleanup...'
+/opt/venv/bin/python scripts/data_migrations/clear_sdk_zero_workout_calories.py \
+    || echo "Warning: SDK workout calories cleanup failed — will retry on next run."
+
+# Upstream runs this from an hourly beat entry; prod has no beat, and our data is small
+# enough to fill data_type_coverage here (once, data_migration).
+echo 'Running data type coverage backfill...'
+/opt/venv/bin/python scripts/data_migrations/backfill_data_type_coverage.py \
+    || echo "Warning: data type coverage backfill failed — will retry on next run."

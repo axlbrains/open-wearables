@@ -10,6 +10,7 @@ from typing import Any
 
 from celery import shared_task
 
+from app.constants.celery_tasks import CeleryTask
 from app.integrations.redis_client import get_redis_client
 from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.services.providers.garmin.backfill_config import (
@@ -77,7 +78,7 @@ def _finalize_chain_stop(user_id: str, current_window: int, error_msg: str) -> N
     complete_backfill(user_id)
 
 
-@shared_task
+@shared_task(name=CeleryTask.GARMIN_CHECK_TRIGGERED_TIMEOUT)
 def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
     """Check if a triggered type has timed out and mark it as timed_out.
 

@@ -18,7 +18,6 @@ PUSH_ENDPOINT = "/api/v1/providers/garmin/webhooks"
 LEGACY_PUSH_ENDPOINT = "/api/v1/garmin/webhooks/push"
 LEGACY_PING_ENDPOINT = "/api/v1/garmin/webhooks/ping"
 WEBHOOK_HANDLER = "app.services.providers.garmin.webhook_handler"
-PROCESS_PUSH_TASK = "app.integrations.celery.tasks.webhook_push_task.process_webhook_push"
 
 VALID_CLIENT_ID = "test-client-id"
 

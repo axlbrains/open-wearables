@@ -7,6 +7,7 @@ import redis.exceptions
 from celery import shared_task
 
 from app.config import settings
+from app.constants.celery_tasks import CeleryTask
 from app.database import SessionLocal
 from app.integrations.redis_client import get_redis_client
 from app.services.sdk.sleep_service import (
@@ -19,7 +20,7 @@ from app.utils.sentry_helpers import log_and_capture_error
 logger = getLogger(__name__)
 
 
-@shared_task
+@shared_task(name=CeleryTask.FINALIZE_STALE_SLEEPS)
 def finalize_stale_sleeps() -> None:
     """No-op when Redis isn't configured.
 
