@@ -19,7 +19,7 @@ from app.constants.workout_types.hevy import cardio_exercise_type, get_unified_w
 from app.database import DbSession
 from app.models import DataSource, EventRecord, UserConnection
 from app.schemas.auth import ConnectionStatus
-from app.schemas.enums import WorkoutType
+from app.schemas.enums import EventCategory, WorkoutType
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -287,7 +287,7 @@ class HevyWorkouts(BaseWorkoutsTemplate):
         segments = [ex.model_dump(mode="json", exclude_none=True) for ex in workout.exercises]
 
         workout_create = EventRecordCreate(
-            category="workout",
+            category=EventCategory.WORKOUT,
             type=workout_type.value,
             source_name="Hevy",
             device_model=None,
@@ -420,7 +420,7 @@ class HevyWorkouts(BaseWorkoutsTemplate):
         existing.duration_seconds = record.duration_seconds
         existing.start_datetime = record.start_datetime
         existing.end_datetime = record.end_datetime
-        event_record_service.event_record_detail_repo.delete_by_record_id(db, existing.id, "workout")
+        event_record_service.event_record_detail_repo.delete_by_record_id(db, existing.id, EventCategory.WORKOUT)
         db.commit()
         event_record_service.create_detail(db, detail.model_copy(update={"record_id": existing.id}))
         return True
