@@ -13,6 +13,7 @@ from app.config import settings
 from app.constants.workout_types.polar import get_unified_workout_type
 from app.database import DbSession
 from app.models import WorkoutDetails
+from app.schemas.enums import EventCategory
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
@@ -145,7 +146,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         zone_offset = offset_to_iso(start_offset_minutes * 60)
 
         record = EventRecordCreate(
-            category="workout",
+            category=EventCategory.WORKOUT,
             type=workout_type.value,
             # axl-api#141: `device` is optional now (Polar omits it for phone-logged
             # exercises); fall back to the provider name for the required source_name.

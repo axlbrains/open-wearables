@@ -9,6 +9,7 @@ from logging import Logger, getLogger
 from uuid import UUID, uuid4
 
 from app.database import DbSession
+from app.schemas.enums import EventCategory
 from app.schemas.model_crud.activities.event_record import EventRecordCreate
 from app.schemas.model_crud.activities.event_record_detail import EventRecordDetailCreate
 from app.services.event_record_service import event_record_service
@@ -91,7 +92,7 @@ class CSVImportService:
 
         details_to_insert = [details[rid] for rid in inserted_ids if rid in details]
         if details_to_insert:
-            event_record_service.bulk_create_details(db_session, details_to_insert, detail_type="workout")
+            event_record_service.bulk_create_details(db_session, details_to_insert, detail_type=EventCategory.WORKOUT)
 
         db_session.commit()
 
