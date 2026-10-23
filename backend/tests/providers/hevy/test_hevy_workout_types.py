@@ -1,6 +1,6 @@
 """Tests for Hevy workout title -> unified WorkoutType mapping."""
 
-from app.constants.workout_types.hevy import get_unified_workout_type
+from app.constants.workout_types.hevy import cardio_exercise_type, get_unified_workout_type
 from app.schemas.enums import WorkoutType
 
 
@@ -32,3 +32,20 @@ class TestHevyWorkoutTypes:
         # A keyword glued inside a longer word still does not count.
         assert get_unified_workout_type("Brunch: legs") == WorkoutType.STRENGTH_TRAINING
         assert get_unified_workout_type("Runway; push") == WorkoutType.STRENGTH_TRAINING
+
+
+class TestCardioExerciseType:
+    def test_machines_and_activities(self) -> None:
+        assert cardio_exercise_type("Ski Erg") == WorkoutType.CARDIO_TRAINING
+        assert cardio_exercise_type("Rowing Machine") == WorkoutType.ROWING_MACHINE
+        assert cardio_exercise_type("Air Bike") == WorkoutType.INDOOR_CYCLING
+        assert cardio_exercise_type("Cycling") == WorkoutType.INDOOR_CYCLING
+        assert cardio_exercise_type("Treadmill") == WorkoutType.RUNNING
+        assert cardio_exercise_type("Running") == WorkoutType.RUNNING
+        assert cardio_exercise_type("Erg") == WorkoutType.ROWING_MACHINE
+
+    def test_strength_moves_with_cardio_words(self) -> None:
+        assert cardio_exercise_type("Seated Cable Row") is None
+        assert cardio_exercise_type("Bent Over Row (Barbell)") is None
+        assert cardio_exercise_type("Bench Press (Barbell)") is None
+        assert cardio_exercise_type(None) is None

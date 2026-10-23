@@ -317,3 +317,56 @@ class TestApiKeyAuth:
         workouts.connection_repo.get_by_user_and_provider.return_value = None
         with pytest.raises(ValueError, match="No active Hevy connection"):
             workouts._make_api_request(MagicMock(), uuid4(), "/v1/workouts")
+
+
+def _cardio(title: str, *metres: float, seconds: float = 300) -> dict:
+    return {"title": title, "sets": [{"distance_meters": m, "duration_seconds": seconds} for m in metres]}
+
+
+class TestClassifyByExercises:
+    """Hevy has no activity type: the exercises decide, and mixed machines get no distance."""
+
+    def test_erg_session_is_cardio_without_a_summed_distance(self, workouts: HevyWorkouts) -> None:
+        # Slava's 2026-10-20 session: ski, row, BikeErg ("Cycling") and an Air Bike warm-up.
+        payload = _workout_payload(
+            title="Engine",
+            exercises=[
+                _cardio("Air Bike", 2000),
+                _cardio("Ski Erg", 2000, 2000),
+                _cardio("Rowing Machine", 2000, 2000),
+                _cardio("Cycling", 5000, 5000),
+            ],
+        )
+        record, detail = workouts._normalize_workout(payload, uuid4())
+        assert record.type == WorkoutType.CARDIO_TRAINING.value
+        assert detail.distance is None
+        assert detail.segments is not None
+        assert len(detail.segments) == 4
+
+    def test_running_intervals_are_running_with_their_distance(self, workouts: HevyWorkouts) -> None:
+        payload = _workout_payload(title="Workout", exercises=[_cardio("Running", 400, 800, 1200, 400, 800, 1200)])
+        record, detail = workouts._normalize_workout(payload, uuid4())
+        assert record.type == WorkoutType.RUNNING.value
+        assert detail.distance == Decimal("4800")
+
+    def test_one_machine_keeps_its_type_and_distance(self, workouts: HevyWorkouts) -> None:
+        payload = _workout_payload(exercises=[_cardio("Rowing Machine", 2000, 2000)])
+        record, detail = workouts._normalize_workout(payload, uuid4())
+        assert record.type == WorkoutType.ROWING_MACHINE.value
+        assert detail.distance == Decimal("4000")
+
+    def test_mostly_cardio_with_a_lift_is_cardio_training(self, workouts: HevyWorkouts) -> None:
+        bench = {"title": "Bench Press (Barbell)", "sets": [{"weight_kg": 80, "reps": 5}]}
+        payload = _workout_payload(exercises=[bench, _cardio("Running", 3000), _cardio("Running", 2000)])
+        record, detail = workouts._normalize_workout(payload, uuid4())
+        assert record.type == WorkoutType.CARDIO_TRAINING.value
+        assert detail.distance == Decimal("5000")
+
+    def test_weighted_carries_and_timed_holds_stay_strength(self, workouts: HevyWorkouts) -> None:
+        carry = {"title": "Farmers Walk", "sets": [{"weight_kg": 32, "distance_meters": 40}]}
+        plank = {"title": "Plank", "sets": [{"duration_seconds": 60}]}
+        row = {"title": "Seated Cable Row", "sets": [{"weight_kg": 50, "reps": 10}]}
+        record, detail = workouts._normalize_workout(_workout_payload(exercises=[carry, plank, row]), uuid4())
+        assert record.type == WorkoutType.STRENGTH_TRAINING.value
+        # the carry's metres are one activity's distance, so they are kept
+        assert detail.distance == Decimal("40")

@@ -15,16 +15,17 @@ from uuid import UUID, uuid4
 import httpx
 from pydantic import ValidationError
 
-from app.constants.workout_types.hevy import get_unified_workout_type
+from app.constants.workout_types.hevy import cardio_exercise_type, get_unified_workout_type
 from app.database import DbSession
 from app.models import DataSource, EventRecord, UserConnection
 from app.schemas.auth import ConnectionStatus
+from app.schemas.enums import WorkoutType
 from app.schemas.model_crud.activities import (
     EventRecordCreate,
     EventRecordDetailCreate,
     EventRecordMetrics,
 )
-from app.schemas.providers.hevy import HevyWorkout
+from app.schemas.providers.hevy import HevyExercise, HevyWorkout
 from app.services.event_record_service import event_record_service
 from app.services.providers.base_strategy import IncompleteSyncError
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
@@ -35,6 +36,54 @@ from app.utils.structured_logging import log_structured
 _PAGE_SIZE = 10
 # Hard stop for the pagination loop; 1000 pages x 10 = 10k workouts per sync.
 _MAX_PAGES = 1000
+
+
+def _exercise_activity(exercise: HevyExercise) -> WorkoutType | None:
+    """The cardio activity of one exercise, or None when it is a strength move.
+
+    Sets with weight or reps make it strength whatever the name says ("Farmer's
+    Walk", "Walking Lunge"). Otherwise a named machine or activity ("Ski Erg",
+    "Treadmill") counts, and so does any exercise logged with distance (a custom
+    cardio template). Duration alone does not: planks and holds are timed strength work.
+    """
+    sets = exercise.sets
+    if any(s.weight_kg or s.reps for s in sets):
+        return None
+    if activity := cardio_exercise_type(exercise.title):
+        return activity
+    if any(s.distance_meters for s in sets):
+        return WorkoutType.CARDIO_TRAINING
+    return None
+
+
+def _classify(workout: HevyWorkout) -> tuple[WorkoutType, float | None]:
+    """Workout type from its exercises, and a distance only when it is one activity.
+
+    Hevy has no activity type, so the exercises decide: a session that is mostly
+    cardio becomes that activity (all the same machine) or cardio training (mixed
+    machines). Otherwise the title keyword map applies, defaulting to strength.
+    Metres from different machines are not one distance (ski + row + bike is not a
+    run), so the distance is published only when every distance-bearing exercise is
+    the same activity; the per-exercise breakdown stays in the segments.
+    """
+    exercises = [ex for ex in workout.exercises if ex.sets]
+    activities = [_exercise_activity(ex) for ex in exercises]
+    cardio = [a for a in activities if a is not None]
+    if cardio and len(cardio) > len(activities) - len(cardio):
+        kinds = set(cardio)
+        workout_type = (
+            kinds.pop() if len(kinds) == 1 and len(cardio) == len(activities) else WorkoutType.CARDIO_TRAINING
+        )
+    else:
+        workout_type = get_unified_workout_type(workout.title)
+
+    distance_by_activity: dict[WorkoutType | None, float] = {}
+    for ex, activity in zip(exercises, activities, strict=True):
+        metres = sum(s.distance_meters for s in ex.sets if s.distance_meters)
+        if metres:
+            distance_by_activity[activity] = distance_by_activity.get(activity, 0.0) + metres
+    distance = next(iter(distance_by_activity.values())) if len(distance_by_activity) == 1 else None
+    return workout_type, distance
 
 
 def _parse_events_page(response: Any) -> tuple[list[dict[str, Any]], int]:
@@ -230,18 +279,16 @@ class HevyWorkouts(BaseWorkoutsTemplate):
         duration_seconds = max(int((end - start).total_seconds()), 0)
 
         metrics: EventRecordMetrics = {}
-        total_distance = sum(
-            s.distance_meters for ex in workout.exercises for s in ex.sets if s.distance_meters is not None
-        )
-        if total_distance:
-            metrics["distance"] = Decimal(str(total_distance))
+        workout_type, distance = _classify(workout)
+        if distance:
+            metrics["distance"] = Decimal(str(distance))
         # Full exercise/set structure goes into the segments JSONB so strength
         # data (reps/weights/RPE per set) survives normalization losslessly.
         segments = [ex.model_dump(mode="json", exclude_none=True) for ex in workout.exercises]
 
         workout_create = EventRecordCreate(
             category="workout",
-            type=get_unified_workout_type(workout.title).value,
+            type=workout_type.value,
             source_name="Hevy",
             device_model=None,
             duration_seconds=duration_seconds,
