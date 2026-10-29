@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 """Seed default admin developer account if it doesn't exist."""
 
-from app.config import settings
+from app.config import DEFAULT_ADMIN_PASSWORD, settings
 from app.database import SessionLocal
 from app.schemas.model_crud.user_management import DeveloperCreate
 from app.services import developer_service
 from app.utils.config_utils import EnvironmentType
-
-# The placeholder in app/config.py. A production deployment that never set
-# ADMIN_PASSWORD would otherwise create a publicly known admin login.
-DEFAULT_ADMIN_PASSWORD = "your-secure-password"
 
 
 class DefaultAdminPasswordError(RuntimeError):
