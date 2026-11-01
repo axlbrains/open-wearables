@@ -1,0 +1,36 @@
+{
+	email slava@axlbrains.com
+}
+
+ow-api.axl.coach {
+	encode zstd gzip
+	request_body {
+		# SDK batches (~60k records) and Garmin activity files.
+		max_size 64MB
+	}
+
+	# Cloud Tasks and Cloud Scheduler call the worker here; the app checks their OIDC token.
+	handle /api/v1/internal/tasks/* {
+		reverse_proxy worker:8000 {
+			# Backfills run inside the request (Cloud Tasks' deadline is 30 min).
+			transport http {
+				read_timeout 1800s
+				write_timeout 1800s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy api:8000 {
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+}
+
+ow-dashboard.axl.coach {
+	encode zstd gzip
+	reverse_proxy frontend:3000
+}

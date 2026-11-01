@@ -124,6 +124,13 @@ class Settings(BaseSettings):
     task_dispatcher_worker_base_url: str | None = None
     task_dispatcher_service_account_email: str | None = None
     task_dispatcher_audience: str | None = None
+    # Off Cloud Run the worker's internal task API is reachable from the internet, so it
+    # checks the Google OIDC token Cloud Tasks / Cloud Scheduler attach. Unset = no check
+    # (Cloud Run keeps the worker behind internal ingress and IAM instead).
+    internal_task_oidc_audience: str | None = None
+    internal_task_allowed_service_accounts: Annotated[list[str], NoDecode] = []
+    # Service account key file for Google APIs (Cloud Tasks, GCS) when there is no metadata server.
+    google_application_credentials: str | None = Field(default=None, alias="GOOGLE_APPLICATION_CREDENTIALS")
     task_dispatcher_default_queue_name: str = "default"
     task_dispatcher_sdk_sync_queue_name: str = "sdk-sync"
     task_dispatcher_garmin_backfill_queue_name: str = "garmin-backfill"
@@ -478,6 +485,14 @@ class Settings(BaseSettings):
 
                 return json.loads(stripped)
             return [int(part) for part in stripped.split(",") if part.strip()]
+        return v
+
+    @field_validator("internal_task_allowed_service_accounts", mode="before")
+    @classmethod
+    def _parse_allowed_service_accounts(cls, v: Any) -> Any:
+        # Comma-separated in env: "a@p.iam.gserviceaccount.com,b@p.iam.gserviceaccount.com".
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
         return v
 
     @field_validator("log_format", mode="before")
