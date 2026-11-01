@@ -45,7 +45,8 @@ services:
   celery-beat:
     <<: *backend
     command: scripts/start/beat.sh
-    mem_limit: 256m
+    # Importing the app alone takes ~250 MB; at 256m beat was OOM-killed on start.
+    mem_limit: 512m
 
   redis:
     image: redis:8
