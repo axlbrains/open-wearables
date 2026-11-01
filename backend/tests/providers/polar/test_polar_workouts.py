@@ -814,7 +814,7 @@ class TestPolarFitIngestion:
         the workout it belonged to -- four hours out in summer, for every Polar workout.
         """
         # Arrange
-        from app.models import DataPointSeries, DataSource
+        from app.models import SeriesSample, DataSource
         from tests.fixtures.fit_builder import make_running_fit
 
         user = UserFactory()
@@ -834,12 +834,12 @@ class TestPolarFitIngestion:
             "10:00 local at +2 is 08:00 UTC"
         )
         inside = (
-            db.query(DataPointSeries)
-            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            db.query(SeriesSample)
+            .join(DataSource, SeriesSample.data_source_id == DataSource.id)
             .filter(
                 DataSource.user_id == user.id,
-                DataPointSeries.recorded_at >= record.start_datetime,
-                DataPointSeries.recorded_at < record.end_datetime,
+                SeriesSample.recorded_at >= record.start_datetime,
+                SeriesSample.recorded_at < record.end_datetime,
             )
             .count()
         )
@@ -854,7 +854,7 @@ class TestPolarFitIngestion:
         sample_polar_exercise: dict,
     ) -> None:
         # Arrange
-        from app.models import DataPointSeries, DataSource
+        from app.models import SeriesSample, DataSource
         from tests.fixtures.fit_builder import make_running_fit
 
         user = UserFactory()
@@ -868,12 +868,12 @@ class TestPolarFitIngestion:
         # Assert
         db.flush()
         stored = (
-            db.query(DataPointSeries)
-            .join(DataSource, DataPointSeries.data_source_id == DataSource.id)
+            db.query(SeriesSample)
+            .join(DataSource, SeriesSample.data_source_id == DataSource.id)
             .filter(DataSource.user_id == user.id)
             .count()
         )
-        assert stored == 240, "every FIT sample should reach data_point_series"
+        assert stored == 240, "every FIT sample should reach series_sample"
 
     @patch("app.services.providers.polar.workouts.download_binary_content")
     def test_a_skipped_re_cover_keeps_the_stored_fit_metrics(

@@ -6,7 +6,7 @@ altitude span nor a step total in the session. The parser now derives both from 
 samples (see ``_fill_session_from_samples`` in ``app/services/fit_parser.py``), but
 workouts already ingested will not re-parse their FIT: the skip guard carries their
 stored FIT fields forward instead. This computes the same values from the samples
-already in ``data_point_series``, so it needs no calls to Polar.
+already in ``series_sample``, so it needs no calls to Polar.
 
 Only NULL fields are filled, so a device's own figure is never overwritten and a
 re-run changes nothing. A workout whose samples do not fall inside its window (one
@@ -56,7 +56,7 @@ _SELECT_WORKOUTS = text("""
 # The workout's own samples: same user, same provider, inside its window.
 _SAMPLES = text("""
     SELECT dps.recorded_at, dps.value
-    FROM data_point_series dps
+    FROM series_sample dps
     JOIN data_source ds ON ds.id = dps.data_source_id
     JOIN series_type_definition std ON std.id = dps.series_type_definition_id
     WHERE ds.provider = :provider AND ds.user_id = :user_id AND std.code = :code

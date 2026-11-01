@@ -4,7 +4,7 @@
 Android SDK builds before 0.12.0 sent an exercise session with a duration and nothing
 else, so those workouts were stored without a distance, and with ``energy_burned = 0``
 because the importer started the sum at zero. The distance was not lost: Health Connect
-also syncs the app's ``DistanceRecord``s, which land in ``data_point_series`` under the
+also syncs the app's ``DistanceRecord``s, which land in ``series_sample`` under the
 same user, provider and source app. The importer now leaves energy null when none is
 sent; this brings the stored workouts in line.
 
@@ -50,7 +50,7 @@ _SELECT_WORKOUTS = text("""
 # a device model, the records do not), so the match is on those columns, not the id.
 _TOTALS = text("""
     SELECT std.code, sum(dps.value) AS total
-    FROM data_point_series dps
+    FROM series_sample dps
     JOIN data_source ds ON ds.id = dps.data_source_id
     JOIN series_type_definition std ON std.id = dps.series_type_definition_id
     WHERE ds.provider = :provider AND ds.user_id = :user_id

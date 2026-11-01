@@ -1,9 +1,9 @@
-# Open Wearables prod on Hostman (VPS axl-ow, de-1, private 10.20.0.11). Replaces the
-# open-wearables-prod-{api,worker,frontend} Cloud Run services and the init job.
-# Postgres is Hostman's managed cluster at 10.20.0.4 (private network only).
-# Cloud Tasks, Cloud Scheduler and the GCS payload bucket stay on GCP: ./gcp.json is the
-# key of open-wearables-hostman@ (enqueuer, actAs open-wearables-prod-api@, objectAdmin
-# on the payload bucket). Secrets live in ./ow.env and ./init.env (chmod 600).
+# Open Wearables prod on Hostman (VPS axl-ow, de-1, private 10.20.0.11), since 2026-11-01.
+# Upstream's own setup: the app runs migrations + data migrations on start (scripts/start/app.sh),
+# Celery worker + beat run the background and periodic tasks on a local Redis. No Cloud Run,
+# Cloud Tasks or Cloud Scheduler any more. Postgres is Hostman's managed cluster at 10.20.0.4
+# (private network only); outgoing webhooks go to hosted Svix (EU). Secrets live in ./ow.env
+# (chmod 600).
 #
 # Docker publishes ports past ufw, so every app port binds to 127.0.0.1; only Caddy is public.
 name: ow
@@ -12,36 +12,53 @@ x-backend: &backend
   image: ${OW_BACKEND_IMAGE}
   restart: unless-stopped
   env_file: ow.env
-  volumes:
-    - ./gcp.json:/run/secrets/gcp.json:ro
-  command: ["/opt/venv/bin/python", "-m", "fastapi", "run", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
-  # Cloud Run gave each 1 GiB.
-  mem_limit: 1g
-  healthcheck:
-    test: ["CMD", "/opt/venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
-    interval: 30s
-    timeout: 5s
-    start_period: 60s
-    retries: 3
+  environment:
+    REDIS_HOST: redis
+  depends_on:
+    redis:
+      condition: service_healthy
   logging:
     driver: json-file
     options: { max-size: "50m", max-file: "5" }
 
 services:
-  api:
+  app:
     <<: *backend
-    environment:
-      INTERNAL_TASK_API_ENABLED: "false"
+    command: scripts/start/app.sh
     ports: ["127.0.0.1:8000:8000"]
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD", "/opt/venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      # app.sh applies migrations and data migrations before uvicorn starts.
+      start_period: 600s
+      retries: 3
 
-  # Cloud Tasks / Cloud Scheduler target. Caddy exposes only /api/v1/internal/tasks/* of it,
-  # and the app checks the Google OIDC token on every call (INTERNAL_TASK_OIDC_AUDIENCE).
-  worker:
+  celery-worker:
     <<: *backend
-    environment:
-      INTERNAL_TASK_API_ENABLED: "true"
-      PULL_SYNC_LOOKBACK: "6h"
-    ports: ["127.0.0.1:8001:8000"]
+    command: scripts/start/worker.sh
+    # io (threads) + cpu (prefork x2) workers; Strava backfills peaked near 1 GiB on Cloud Run.
+    mem_limit: 1536m
+    stop_grace_period: 60s
+
+  celery-beat:
+    <<: *backend
+    command: scripts/start/beat.sh
+    mem_limit: 256m
+
+  redis:
+    image: redis:8
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis_data:/data
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   frontend:
     image: ${OW_FRONTEND_IMAGE}
@@ -54,18 +71,8 @@ services:
       driver: json-file
       options: { max-size: "20m", max-file: "3" }
 
-  # Was the open-wearables-prod-init Cloud Run job: alembic + seeds + data migrations.
-  # Run before (re)starting api/worker on a new image: docker compose run --rm init
-  init:
-    image: ${OW_BACKEND_IMAGE}
-    profiles: ["init"]
-    env_file: [ow.env, init.env]
-    volumes:
-      - ./gcp.json:/run/secrets/gcp.json:ro
-    command: ["/bin/bash", "scripts/start/cloud-run-init.sh"]
-
-  # Started only at cut-over, once ow-api / ow-dashboard point here: before that every
-  # ACME attempt would fail and count against Let's Encrypt limits.
+  # Started at cut-over, once ow-api / ow-dashboard point here: before that every ACME
+  # attempt would fail and count against Let's Encrypt limits.
   caddy:
     image: caddy:2.10
     profiles: ["edge"]
@@ -75,8 +82,9 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    depends_on: [api, worker, frontend]
+    depends_on: [app, frontend]
 
 volumes:
+  redis_data:
   caddy_data:
   caddy_config:
