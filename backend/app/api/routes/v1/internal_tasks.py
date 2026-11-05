@@ -1,4 +1,3 @@
-import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -12,9 +11,9 @@ from app.integrations.task_dispatcher import (
     deserialize_payload,
     invoke_registered_task,
 )
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _google_request = GoogleAuthRequest()
 
@@ -33,15 +32,11 @@ def verify_task_caller(authorization: Annotated[str | None, Header()] = None) ->
     try:
         claims = id_token.verify_oauth2_token(authorization.removeprefix("Bearer "), _google_request, audience)
     except ValueError as exc:
-        log_structured(
-            logger, "warning", "Rejected internal task token", action="internal_task_auth_reject", reason=str(exc)
-        )
+        logger.warning("Rejected internal task token", action="internal_task_auth_reject", reason=str(exc))
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
     email = claims.get("email")
     if not claims.get("email_verified") or email not in settings.internal_task_allowed_service_accounts:
-        log_structured(
-            logger, "warning", "Rejected internal task caller", action="internal_task_auth_reject", email=email
-        )
+        logger.warning("Rejected internal task caller", action="internal_task_auth_reject", email=email)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Caller not allowed")
 
 

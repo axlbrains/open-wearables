@@ -17,7 +17,7 @@ from app.repositories.data_point_series_repository import WriteCounts
 from app.schemas.auth import ConnectionStatus
 from app.services.providers.base_strategy import HistoricalSyncResult
 from app.services.providers.sync_247_result import Sync247Result
-from app.utils.exceptions import UnsupportedProviderError
+from app.utils.exceptions import ProviderNotConnectedError, UnsupportedProviderError
 from tests.factories import ApiKeyFactory, UserConnectionFactory, UserFactory
 
 
@@ -97,19 +97,23 @@ class TestSyncDataEndpoint:
             },
         }
 
-    @patch("app.api.routes.v1.sync_data.dispatch_task")
+    @patch("app.api.routes.v1.sync_data.sync_vendor_data")
     def test_sync_garmin_async_mode(
         self,
-        mock_dispatch: MagicMock,
+        mock_celery_task: MagicMock,
         client: TestClient,
         db: Session,
     ) -> None:
-        """Test async sync dispatches via dispatch_task."""
+        """Test async sync dispatches to Celery task."""
+        # Arrange
         user = UserFactory()
         api_key = ApiKeyFactory()
         UserConnectionFactory(user=user, provider="garmin", status=ConnectionStatus.ACTIVE)
 
-        mock_dispatch.return_value = MagicMock(id="test-task-id-123")
+        # Configure mock task
+        mock_task = MagicMock()
+        mock_task.id = "test-task-id-123"
+        mock_celery_task.delay.return_value = mock_task
 
         # Act - async=true is default
         response = client.post(
@@ -117,16 +121,18 @@ class TestSyncDataEndpoint:
             headers={"X-Open-Wearables-API-Key": api_key.plain_key},
         )
 
+        # Assert
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
         assert data["async"] is True
         assert data["task_id"] == "test-task-id-123"
 
-        mock_dispatch.assert_called_once()
-        inner_kwargs = mock_dispatch.call_args.kwargs["kwargs"]
-        assert inner_kwargs["providers"] == ["garmin"]
-        assert inner_kwargs["user_id"] == str(user.id)
+        # Verify Celery task was dispatched
+        mock_celery_task.delay.assert_called_once()
+        call_kwargs = mock_celery_task.delay.call_args[1]
+        assert call_kwargs["providers"] == ["garmin"]
+        assert call_kwargs["user_id"] == str(user.id)
 
     def test_sync_garmin_unauthorized(self, client: TestClient, db: Session) -> None:
         """Test that missing API key returns 401."""
@@ -146,12 +152,8 @@ class TestSyncDataEndpoint:
         api_key = ApiKeyFactory()
         # No connection created for this user
 
-        # Configure mock to raise HTTPException for no connection
-        from fastapi import HTTPException
-
-        mock_provider_factory.get_provider.return_value.workouts.load_data.side_effect = HTTPException(
-            status_code=404,
-            detail="No active connection found for user",
+        mock_provider_factory.get_provider.return_value.workouts.load_data.side_effect = ProviderNotConnectedError(
+            "garmin"
         )
 
         # Act - use async=false to test synchronous path
@@ -210,7 +212,7 @@ class TestSyncDataEndpoint:
         assert call_kwargs["offset"] == 10
 
     def test_sync_invalid_provider(self, client: TestClient, db: Session) -> None:
-        """Test that invalid provider enum value returns 400."""
+        """Test that invalid provider enum value returns 422."""
         # Arrange
         user = UserFactory()
         api_key = ApiKeyFactory()
@@ -222,7 +224,7 @@ class TestSyncDataEndpoint:
         )
 
         # Assert
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     def test_sync_provider_not_supporting_workouts(
         self,

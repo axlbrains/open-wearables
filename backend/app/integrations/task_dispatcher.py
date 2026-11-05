@@ -5,7 +5,6 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from logging import getLogger
 from typing import Any
 
 import httpx
@@ -13,8 +12,9 @@ from celery import current_app as current_celery_app
 
 from app.config import settings
 from app.integrations.google_auth import get_google_access_token
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 _CLOUD_TASKS_API_BASE_URL = "https://cloudtasks.googleapis.com/v2"
 _BYTES_MARKER = "__open_wearables_bytes__"

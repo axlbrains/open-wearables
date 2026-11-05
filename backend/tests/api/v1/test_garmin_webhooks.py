@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.constants.celery_tasks import CeleryTask
 
 PUSH_ENDPOINT = "/api/v1/providers/garmin/webhooks"
 LEGACY_PUSH_ENDPOINT = "/api/v1/garmin/webhooks/push"
@@ -87,9 +88,7 @@ class TestGarminWebhookTaskEnqueue:
         client: TestClient,
         db: Session,
     ) -> None:
-        """POST enqueues PROCESS_WEBHOOK_PUSH with the raw payload."""
-        from app.integrations.task_dispatcher import RegisteredTask
-
+        """POST enqueues process_push with the raw payload."""
         payload = {
             "activities": [
                 {
@@ -103,30 +102,31 @@ class TestGarminWebhookTaskEnqueue:
         }
         headers = {"garmin-client-id": VALID_CLIENT_ID}
 
-        with patch(f"{WEBHOOK_HANDLER}.dispatch_task") as mock_dispatch:
-            mock_dispatch.return_value = MagicMock(id="test-task-id")
+        with patch(f"{WEBHOOK_HANDLER}.celery_app") as mock_celery:
+            mock_celery.send_task.return_value = MagicMock(id="test-task-id")
             response = client.post(PUSH_ENDPOINT, headers=headers, json=payload)
 
         assert response.status_code == 200
         assert response.json() == {"status": "accepted"}
-        mock_dispatch.assert_called_once()
-        assert mock_dispatch.call_args.args[0] == RegisteredTask.PROCESS_WEBHOOK_PUSH
+        mock_celery.send_task.assert_called_once()
+        task_name, _ = mock_celery.send_task.call_args[0][0], mock_celery.send_task.call_args
+        assert task_name == CeleryTask.PROCESS_WEBHOOK_PUSH
 
     def test_enqueues_task_with_correct_payload(
         self,
         client: TestClient,
         db: Session,
     ) -> None:
-        """The args passed to dispatch_task match the incoming webhook body."""
+        """The payload passed to send_task matches the incoming webhook body."""
         payload = {"hrv": [{"userId": "u1", "summaryId": "s1"}]}
         headers = {"garmin-client-id": VALID_CLIENT_ID}
 
-        with patch(f"{WEBHOOK_HANDLER}.dispatch_task") as mock_dispatch:
-            mock_dispatch.return_value = MagicMock(id="task-xyz")
+        with patch(f"{WEBHOOK_HANDLER}.celery_app") as mock_celery:
+            mock_celery.send_task.return_value = MagicMock(id="task-xyz")
             client.post(PUSH_ENDPOINT, headers=headers, json=payload)
 
-        # dispatch_task(RegisteredTask.PROCESS_WEBHOOK_PUSH, args=["garmin", payload, trace_id])
-        sent_args = mock_dispatch.call_args.kwargs["args"]
+        # send_task(CeleryTask.PROCESS_WEBHOOK_PUSH, args=["garmin", payload, trace_id])
+        sent_args = mock_celery.send_task.call_args[1]["args"]
         assert sent_args[0] == "garmin"
         assert sent_args[1] == payload
 
@@ -139,14 +139,14 @@ class TestGarminWebhookRouting:
         response = client.get(PUSH_ENDPOINT)
         assert response.status_code == 501
 
-    def test_unknown_provider_returns_404(self, client: TestClient, db: Session) -> None:
+    def test_unknown_provider_is_a_validation_error(self, client: TestClient, db: Session) -> None:
         """Unknown provider names return 404."""
         response = client.post(
             "/api/v1/providers/unknown_provider/webhooks",
             headers={"garmin-client-id": "x"},
             json={},
         )
-        assert response.status_code == 404
+        assert response.status_code == 422
 
 
 class TestGarminDeprecatedRoutes:

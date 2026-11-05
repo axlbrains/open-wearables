@@ -1,4 +1,5 @@
 from app.constants.series_types.sdk.metric_types import APPLE_METRIC_TYPE_TO_SERIES_TYPE
+from app.constants.series_types.sdk.workout_samples import WORKOUT_ROUTE_SERIES
 from app.constants.series_types.sdk.workout_statistics import WORKOUT_STATISTIC_TYPE_TO_SERIES_TYPE
 from app.schemas.enums import SeriesType
 from app.schemas.enums.health_score_category import HealthScoreCategory
@@ -8,6 +9,7 @@ TIMESERIES: frozenset[SeriesType] = frozenset(
     {
         *APPLE_METRIC_TYPE_TO_SERIES_TYPE.values(),
         *WORKOUT_STATISTIC_TYPE_TO_SERIES_TYPE.values(),
+        *WORKOUT_ROUTE_SERIES,  # workouts[].route, gated by settings.ingest_workout_samples
     }
 )
 
@@ -19,11 +21,12 @@ WORKOUT_FIELDS: frozenset[str] = frozenset(
         "heart_rate_avg",
         "steps_count",
         "energy_burned",
+        "moving_time_seconds",  # fork: Health Connect exercise segments (axlbrains #41)
         "distance",
         "max_speed",
         "average_speed",
         "average_cadence",
-        "moving_time_seconds",
+        "average_watts",
         "total_elevation_gain",
         "elev_high",
         "elev_low",

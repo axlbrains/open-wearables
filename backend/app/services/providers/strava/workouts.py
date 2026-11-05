@@ -3,9 +3,10 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import HTTPException, status
+from celery import current_app as celery_app
 
 from app.config import settings
+from app.constants.celery_tasks import CeleryTask
 from app.constants.entry_source import get_unified_strava_entry_source
 from app.constants.workout_types import get_unified_strava_workout_type
 from app.database import DbSession
@@ -23,12 +24,16 @@ from app.schemas.providers.strava import (
     StravaStreamSet,
 )
 from app.services.event_record_service import event_record_service
+from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.strava.coverage import STREAM_KEY_SERIES_TYPE, STREAM_KEYS_PARAM
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.timeseries_service import timeseries_service
 from app.utils.dates import offset_to_iso
-from app.utils.sentry_helpers import log_and_capture_error
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
+
+logger = get_logger(__name__)
+
+_STREAM_SERIES_TYPES = frozenset(STREAM_KEY_SERIES_TYPE.values())
 
 
 class StravaWorkouts(BaseWorkoutsTemplate):
@@ -87,9 +92,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                 page += 1
 
             except Exception as e:
-                log_structured(
-                    self.logger,
-                    "error",
+                logger.error(
                     "Error fetching Strava activities page",
                     provider="strava",
                     action="strava_fetch_page_error",
@@ -98,9 +101,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                     error=str(e),
                 )
                 if all_activities:
-                    log_structured(
-                        self.logger,
-                        "warning",
+                    logger.warning(
                         "Returning partial activity data due to error",
                         provider="strava",
                         action="strava_partial_data",
@@ -137,6 +138,20 @@ class StravaWorkouts(BaseWorkoutsTemplate):
         """Get detailed activity data from Strava API."""
         # hard-coded value - update with base template changes
         return self._make_api_request(db, user_id, f"/api/v3/activities/{workout_id}")
+
+    def get_athlete_from_api(self, db: DbSession, user_id: UUID, *, revoke_on_failure: bool = True) -> Any:
+        """The authenticated athlete; ReauthRequiredError once the athlete deauthorized the app."""
+        return make_authenticated_request(
+            db=db,
+            user_id=user_id,
+            connection_repo=self.connection_repo,
+            oauth=self.oauth,
+            api_base_url=self.api_base_url,
+            provider_name=self.provider_name,
+            # hard-coded value - update with base template changes
+            endpoint="/api/v3/athlete",
+            revoke_on_failure=revoke_on_failure,
+        )
 
     def _extract_dates_from_iso(self, start_iso: str, elapsed_time: int) -> tuple[datetime, datetime]:
         """Extract start and end dates from ISO string and elapsed time."""
@@ -266,7 +281,6 @@ class StravaWorkouts(BaseWorkoutsTemplate):
             # A manual activity has no streams and Strava answers 404; the caller turns
             # that into "no samples" (see _ingest_workout_streams). Without this the
             # api_client still logged it at error level before the exception got here.
-            quiet_statuses=(404,),
         )
 
         # key_by_type=true returns an object keyed by stream type, not a list.
@@ -322,25 +336,12 @@ class StravaWorkouts(BaseWorkoutsTemplate):
     ) -> int | None:
         """Fetch + persist per-sample streams on workout arrival, flag-gated and failure-isolated.
 
-        Returns the number of samples written, or ``None`` when the activity has no
-        streams at all — a manual entry, which Strava answers with 404. That is a
-        permanent property of the activity, so callers must not schedule a retry for
-        it, unlike ``0`` (streams exist but weren't ready yet).
+        Returns the samples saved, or None when Strava has no streams for the workout (yet).
         """
         if not settings.ingest_workout_samples:
             return 0
-        # Workouts are re-upserted whenever a sync window re-covers them (webhook
-        # arrival followed by the periodic pull is the common case). Streams are
-        # immutable once the activity is uploaded, so if samples already exist in
-        # the workout window skip the extra API call instead of re-fetching and
-        # re-upserting identical rows.
-        if record.end_datetime is not None and timeseries_service.has_samples_in_range(
-            db,
-            user_id,
-            "strava",
-            record.start_datetime,
-            record.end_datetime,
-        ):
+        # Stored streams aren't fetched again; an activity cropped in Strava keeps its earlier ones.
+        if self._has_stored_streams(db, user_id, activity, record):
             return 0
         try:
             samples = self._build_workout_samples(
@@ -351,38 +352,13 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                 record.zone_offset,
                 activity.device_name or None,
             )
-        except HTTPException as exc:
-            if exc.status_code == status.HTTP_404_NOT_FOUND:
-                # Manual activities carry no streams; Strava answers /streams with 404.
-                # Not an error, and never worth retrying — the hourly lookback would
-                # otherwise re-raise this on every pass, forever.
-                log_structured(
-                    self.logger,
-                    "info",
-                    "Strava activity has no streams (manual entry); skipping samples",
-                    provider="strava",
-                    action="strava_streams_absent",
-                    activity_id=str(activity.id),
-                    user_id=str(user_id),
-                )
-                return None
-            log_and_capture_error(
-                exc,
-                self.logger,
-                "Failed to fetch Strava workout streams, skipping samples",
-                extra={"activity_id": activity.id},
-            )
-            return 0
         except Exception as exc:
-            log_and_capture_error(
-                exc,
-                self.logger,
-                "Failed to fetch Strava workout streams, skipping samples",
-                extra={"activity_id": activity.id},
+            logger.error(
+                "Failed to fetch Strava workout streams, skipping samples", exc_info=exc, activity_id=activity.id
             )
             return 0
         if not samples:
-            return 0
+            return None
         # Savepoint so a failed bulk insert rolls back only the samples and
         # leaves the workout's outer transaction usable (no PendingRollbackError).
         nested = db.begin_nested()
@@ -392,13 +368,34 @@ class StravaWorkouts(BaseWorkoutsTemplate):
             return len(samples)
         except Exception as exc:
             nested.rollback()
-            log_and_capture_error(
-                exc,
-                self.logger,
+            logger.error(
                 "Strava workout sample ingestion failed; continuing",
-                extra={"activity_id": activity.id, "sample_count": len(samples)},
+                exc_info=exc,
+                activity_id=activity.id,
+                sample_count=len(samples),
             )
             return 0
+
+    def _has_stored_streams(
+        self, db: DbSession, user_id: UUID, activity: StravaActivityJSON, record: EventRecordCreate
+    ) -> bool:
+        """A failed probe reads as nothing stored, so the streams are fetched as before."""
+        if record.end_datetime is None:
+            return False
+        try:
+            with db.begin_nested():
+                return timeseries_service.has_samples_in_range(
+                    db,
+                    user_id,
+                    "strava",
+                    activity.device_name or None,
+                    _STREAM_SERIES_TYPES,
+                    record.start_datetime,
+                    record.end_datetime,
+                )
+        except Exception as exc:
+            logger.error("Failed to check stored Strava workout streams", exc_info=exc, activity_id=activity.id)
+            return False
 
     def load_data(
         self,
@@ -443,9 +440,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                 activity = StravaActivityJSON(**raw) if isinstance(raw, dict) else raw
                 parsed_activities.append(activity)
             except Exception as e:
-                log_structured(
-                    self.logger,
-                    "warning",
+                logger.warning(
                     "Failed to parse Strava activity",
                     provider="strava",
                     action="strava_parse_error",
@@ -478,9 +473,7 @@ class StravaWorkouts(BaseWorkoutsTemplate):
             db: Database session
             activity: Parsed Strava activity data
             user_id: Internal user ID (already mapped from Strava athlete ID)
-            stream_retry_attempt: which delayed stream-ingest attempt to schedule
-                if streams are still empty (1 on the webhook path; the retry task
-                passes attempt+1 so the backoff chain terminates)
+            stream_retry_attempt: Retry attempt to schedule if streams are still empty
 
         Returns:
             List of created event record IDs
@@ -489,41 +482,21 @@ class StravaWorkouts(BaseWorkoutsTemplate):
 
         record, detail = self._normalize_workout(activity, user_id)
         created_record = event_record_service.create(db, record)
-        detail_for_record = detail.model_copy(update={"record_id": created_record.id})
-        event_record_service.create_detail(db, detail_for_record)
-        created_ids.append(created_record.id)
-        ingested = self._ingest_workout_streams(db, activity, user_id, record)
-
-        # Strava's webhook typically fires seconds after upload, before their
-        # stream processing finishes — the immediate fetch above then returns
-        # empty and, because the webhook bumps last_synced_at past the
-        # activity's start, the periodic pull never re-covers the workout.
-        # Schedule a delayed retry so the samples land once Strava is done.
-        # `None` means the activity has no streams at all (manual entry) — nothing
-        # to wait for, so it deliberately fails this check.
+        # Retries re-run this flow; skip the detail (and its workout webhook) when it already exists.
         if (
-            ingested == 0
-            and settings.ingest_workout_samples
-            and record.end_datetime is not None
-            and not timeseries_service.has_samples_in_range(
-                db, user_id, "strava", record.start_datetime, record.end_datetime
-            )
+            event_record_service.event_record_detail_repo.get_by_record_id(db, created_record.id, EventCategory.WORKOUT)
+            is None
         ):
-            # Imported lazily: importing any module under the celery tasks package
-            # triggers tasks/__init__, which imports tasks that import the provider
-            # factory — and the factory imports this module (same pattern as
-            # outgoing_webhooks/events._dispatch).
-            from app.integrations.celery.tasks.strava_stream_retry_task import (
-                max_stream_retry_attempts,
-                schedule_stream_retry,
-            )
-
-            if stream_retry_attempt <= max_stream_retry_attempts():
+            detail_for_record = detail.model_copy(update={"record_id": created_record.id})
+            event_record_service.create_detail(db, detail_for_record)
+        created_ids.append(created_record.id)
+        # The webhook often beats Strava's stream processing and the pull won't re-cover it, so retry later.
+        # A manual activity never gets streams.
+        if self._ingest_workout_streams(db, activity, user_id, record) is None and not activity.manual:
+            if stream_retry_attempt <= settings.strava_stream_retry_max_attempts:
                 schedule_stream_retry(str(user_id), str(activity.id), attempt=stream_retry_attempt)
             else:
-                log_structured(
-                    self.logger,
-                    "warning",
+                logger.warning(
                     "Strava streams still empty after final retry, giving up",
                     provider="strava",
                     action="stream_retry_exhausted",
@@ -531,3 +504,21 @@ class StravaWorkouts(BaseWorkoutsTemplate):
                 )
 
         return created_ids
+
+
+def schedule_stream_retry(user_id: str, activity_id: str, attempt: int) -> None:
+    """Schedule stream re-fetch attempt N, delayed by base * 3^(N-1) seconds."""
+    countdown = settings.strava_stream_retry_base_delay_seconds * 3 ** (attempt - 1)
+    celery_app.send_task(
+        CeleryTask.RETRY_STRAVA_STREAM_INGEST,
+        kwargs={"user_id": user_id, "activity_id": activity_id, "attempt": attempt},
+        countdown=countdown,
+    )
+    logger.info(
+        "Strava streams not ready; scheduled delayed ingest",
+        provider="strava",
+        action="stream_retry_scheduled",
+        activity_id=activity_id,
+        attempt=attempt,
+        countdown_seconds=countdown,
+    )

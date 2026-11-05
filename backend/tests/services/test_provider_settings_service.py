@@ -15,15 +15,12 @@ from pydantic import SecretStr
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.integrations.task_dispatcher import RegisteredTask
+from app.constants.celery_tasks import CeleryTask
 from app.schemas.auth import LiveSyncMode
 from app.schemas.enums import ProviderName
 from app.schemas.model_crud.data_priority import ProviderSettingUpdate
 from app.services.provider_settings_service import ProviderSettingsService
-
-# The fork routes this through the dispatcher (prod has no broker), so the tests
-# patch dispatch_task where base_strategy calls it.
-_RECONCILE_TASK = RegisteredTask.RECONCILE_PROVIDER_WEBHOOKS
+from app.utils.exceptions import InvalidInputError, UnsupportedProviderError
 
 
 class TestProviderSettingsServiceGetAllProviders:
@@ -218,13 +215,13 @@ class TestProviderSettingsServiceUpdateProviderStatus:
         assert isinstance(result.has_cloud_api, bool)
 
     def test_update_provider_setting_invalid_provider_raises_error(self, db: Session) -> None:
-        """Should raise ValueError for invalid provider name."""
+        """Should raise InvalidInputError for invalid provider name."""
         # Arrange
         service = ProviderSettingsService()
         update = ProviderSettingUpdate(is_enabled=False)
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Unknown provider"):
+        with pytest.raises(InvalidInputError, match="Unknown provider"):
             service.update_provider_setting(db, "invalid_provider", update)
 
     def test_update_provider_setting_case_sensitive(self, db: Session) -> None:
@@ -234,7 +231,7 @@ class TestProviderSettingsServiceUpdateProviderStatus:
         update = ProviderSettingUpdate(is_enabled=False)
 
         # Act & Assert - uppercase should fail
-        with pytest.raises(ValueError, match="Unknown provider"):
+        with pytest.raises(InvalidInputError, match="Unknown provider"):
             service.update_provider_setting(db, "APPLE", update)
 
 
@@ -270,7 +267,7 @@ class TestProviderSettingsServiceBulkUpdateProviders:
         }
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Unknown provider"):
+        with pytest.raises(InvalidInputError, match="Unknown provider"):
             service.bulk_update_providers(db, updates)
 
         # Verify no updates were applied (transaction rolled back)
@@ -340,7 +337,7 @@ class TestProviderSettingsServiceBulkUpdateProviders:
         }
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Unknown provider"):
+        with pytest.raises(InvalidInputError, match="Unknown provider"):
             service.bulk_update_providers(db, updates)
 
         # Verify apple is still disabled (update didn't go through)
@@ -374,7 +371,7 @@ class TestProviderSettingsServiceProviderFactory:
         update = ProviderSettingUpdate(is_enabled=False)
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Unknown provider"):
+        with pytest.raises(InvalidInputError, match="Unknown provider"):
             service.update_provider_setting(db, "nonexistent", update)
 
 
@@ -398,13 +395,13 @@ class TestProviderSettingsServiceLiveSyncMode:
         assert suunto.live_sync_mode == LiveSyncMode.WEBHOOK
 
     def test_update_live_sync_mode_non_configurable_provider_raises(self, db: Session) -> None:
-        """Should raise ValueError when trying to set live_sync_mode on a non-configurable provider."""
+        """Should raise UnsupportedProviderError when trying to set live_sync_mode on a non-configurable provider."""
         # Garmin: webhook_stream=True, webhook_callback=True, rest_pull=False → live_sync_configurable=False
         service = ProviderSettingsService()
 
         update = ProviderSettingUpdate(live_sync_mode=LiveSyncMode.WEBHOOK)
 
-        with pytest.raises(ValueError, match="does not support live sync mode configuration"):
+        with pytest.raises(UnsupportedProviderError, match="does not support live sync mode configuration"):
             service.update_provider_setting(db, "garmin", update)
 
     def test_update_live_sync_mode_explicit_null_raises(self, db: Session) -> None:
@@ -426,25 +423,29 @@ class TestProviderSettingsServiceWebhookDispatch:
         """Should hand the new mode to the provider's strategy in both directions."""
         service = ProviderSettingsService()
 
-        with patch("app.services.providers.base_strategy.dispatch_task") as send_task:
+        with patch("app.services.providers.base_strategy.celery_app.send_task") as send_task:
             service.update_provider_setting(db, "oura", ProviderSettingUpdate(live_sync_mode=mode))
 
-        send_task.assert_called_once_with(_RECONCILE_TASK, kwargs={"provider": "oura", "mode": mode})
+        send_task.assert_called_once_with(
+            CeleryTask.RECONCILE_PROVIDER_WEBHOOKS, args=["oura", mode], queue="webhook_sync"
+        )
 
     def test_mode_change_reconciles_per_user_provider_the_same_way(self, db: Session) -> None:
         """Per-user providers take the same path; their fan-out handles the revoke."""
         service = ProviderSettingsService()
 
-        with patch("app.services.providers.base_strategy.dispatch_task") as send_task:
+        with patch("app.services.providers.base_strategy.celery_app.send_task") as send_task:
             service.update_provider_setting(db, "withings", ProviderSettingUpdate(live_sync_mode=LiveSyncMode.PULL))
 
-        send_task.assert_called_once_with(_RECONCILE_TASK, kwargs={"provider": "withings", "mode": LiveSyncMode.PULL})
+        send_task.assert_called_once_with(
+            CeleryTask.RECONCILE_PROVIDER_WEBHOOKS, args=["withings", LiveSyncMode.PULL], queue="webhook_sync"
+        )
 
     def test_provider_without_registration_api_dispatches_nothing(self, db: Session) -> None:
         """Should stay quiet for providers whose subscriptions are not managed by API."""
         service = ProviderSettingsService()
 
-        with patch("app.services.providers.base_strategy.dispatch_task") as send_task:
+        with patch("app.services.providers.base_strategy.celery_app.send_task") as send_task:
             service.update_provider_setting(db, "suunto", ProviderSettingUpdate(live_sync_mode=LiveSyncMode.WEBHOOK))
 
         send_task.assert_not_called()
@@ -453,7 +454,7 @@ class TestProviderSettingsServiceWebhookDispatch:
         """Should leave subscriptions alone when live_sync_mode is unchanged."""
         service = ProviderSettingsService()
 
-        with patch("app.services.providers.base_strategy.dispatch_task") as send_task:
+        with patch("app.services.providers.base_strategy.celery_app.send_task") as send_task:
             service.update_provider_setting(db, "oura", ProviderSettingUpdate(is_enabled=False))
 
         send_task.assert_not_called()

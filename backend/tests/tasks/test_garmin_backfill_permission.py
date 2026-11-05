@@ -13,6 +13,7 @@ import pytest
 from app.integrations.celery.tasks.garmin.backfill_task import start_full_backfill
 
 MODULE = "app.integrations.celery.tasks.garmin.backfill_task"
+TRIGGER_MODULE = "app.integrations.celery.tasks.garmin.backfill_trigger"
 
 
 def _make_connection(scope: str | None) -> MagicMock:
@@ -65,8 +66,9 @@ class TestBackfillPermissionCheck:
             patch(f"{MODULE}.get_current_window", return_value=0),
             patch(f"{MODULE}.init_window_state"),
             patch(f"{MODULE}.reset_type_status"),
-            patch(f"{MODULE}.dispatch_task"),
+            patch(f"{MODULE}.trigger_backfill_for_type") as mock_trigger,
         ):
+            mock_trigger.apply_async = MagicMock()
             result = start_full_backfill(str(uuid4()))
 
         assert result["status"] == "started"
@@ -84,8 +86,9 @@ class TestBackfillPermissionCheck:
             patch(f"{MODULE}.get_current_window", return_value=0),
             patch(f"{MODULE}.init_window_state"),
             patch(f"{MODULE}.reset_type_status"),
-            patch(f"{MODULE}.dispatch_task"),
+            patch(f"{MODULE}.trigger_backfill_for_type") as mock_trigger,
         ):
+            mock_trigger.apply_async = MagicMock()
             result = start_full_backfill(str(uuid4()))
 
         assert result["status"] == "started"

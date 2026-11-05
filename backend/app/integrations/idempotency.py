@@ -19,14 +19,14 @@ long and legitimate re-dispatches have to wait. Tune per call site.
 """
 
 from functools import wraps
-from logging import getLogger
 from typing import Any, Callable
 
 import redis.exceptions
 
 from app.integrations.redis_client import get_redis_client
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def idempotent(
@@ -58,8 +58,8 @@ def idempotent(
                 lock_key = f"idem:{key(*args, **kwargs)}"
             except Exception:
                 logger.exception(
-                    "Idempotency key function raised; running %s without dedup",
-                    getattr(func, "__name__", "<unknown>"),
+                    "Idempotency key function raised; running without dedup",
+                    handler=getattr(func, "__name__", "<unknown>"),
                 )
                 return func(*args, **kwargs)
 
@@ -67,16 +67,17 @@ def idempotent(
                 acquired = get_redis_client().set(lock_key, "1", nx=True, ex=ttl_seconds)
             except (redis.exceptions.RedisError, OSError) as exc:
                 logger.warning(
-                    "Idempotency Redis unreachable; running %s without dedup: %s",
-                    getattr(func, "__name__", "<unknown>"),
-                    exc,
+                    "Idempotency Redis unreachable; running without dedup",
+                    exc_info=exc,
+                    handler=getattr(func, "__name__", "<unknown>"),
                 )
                 return func(*args, **kwargs)
 
             if not acquired:
                 logger.info(
                     "Task deduplicated by idempotency lock",
-                    extra={"handler": getattr(func, "__name__", "<unknown>"), "lock_key": lock_key},
+                    handler=getattr(func, "__name__", "<unknown>"),
+                    lock_key=lock_key,
                 )
                 return {"status": "deduplicated", "lock_key": lock_key}
 

@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Annotated, Any
@@ -7,16 +6,15 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Path, Query, status
 
 from app.database import DbSession
-from app.integrations.celery.tasks import get_garmin_backfill_status
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
+from app.integrations.celery.tasks import (
+    get_garmin_backfill_status,
+    sync_vendor_data,
+)
 from app.schemas.enums import ProviderName
 from app.schemas.responses.upload import SyncDetails, SyncQueuedResponse, SyncResponse
 from app.services import ApiKeyDep
 from app.services.providers.factory import ProviderFactory
-from app.utils.exceptions import UnsupportedProviderError
 from app.utils.sync_params import build_sync_params
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter()
 factory = ProviderFactory()
@@ -31,18 +29,13 @@ def _queue_pull_sync(
     *,
     is_historical: bool = False,
 ) -> Any:
-    """Enqueue a pull-API sync task and return the dispatch handle."""
-    historical = "h" if is_historical else "l"
-    return dispatch_task(
-        RegisteredTask.SYNC_VENDOR_DATA,
-        kwargs={
-            "user_id": str(user_id),
-            "start_date": start_date,
-            "end_date": end_date,
-            "providers": [provider_value],
-            "is_historical": is_historical,
-        },
-        dedup_key=f"sync_vendor:{user_id}:{provider_value}:{start_date}:{end_date}:{historical}",
+    """Enqueue a pull-API sync task and return the Celery AsyncResult."""
+    return sync_vendor_data.delay(
+        user_id=str(user_id),
+        start_date=start_date,
+        end_date=end_date,
+        providers=[provider_value],
+        is_historical=is_historical,
     )
 
 
@@ -116,12 +109,11 @@ def sync_user_data(
     - **Whoop**: Supports workouts and 247 data (sleep/recovery)
 
     **Execution Mode:**
-    - `async=true` (default): Dispatches sync to the configured background worker. Returns immediately with task ID.
+    - `async=true` (default): Dispatches sync to background Celery worker. Returns immediately with task ID.
     - `async=false`: Executes synchronously (may timeout for large data sets).
 
     Requires valid API key and active connection for the user.
     """
-    # Async mode: dispatch to the configured task backend and return immediately
     if run_async:
         # The async worker (sync_vendor_data) always syncs all data types and
         # does not accept per-type or provider-specific flags. Reject requests
@@ -259,6 +251,11 @@ def get_garmin_backfill_status_endpoint(
     }
 
 
+# =============================================================================
+# Historical Sync — user-initiated, provider-agnostic
+# =============================================================================
+
+
 @router.post("/{provider}/users/{user_id}/sync/historical")
 def sync_historical_data(
     provider: Annotated[ProviderName, Path(description="Data provider")],
@@ -267,18 +264,19 @@ def sync_historical_data(
     days: Annotated[
         int,
         Query(
-            description="Days of historical data to fetch (default: 90, max: 365). "
-            "Ignored for providers with their own limits (e.g. Garmin: 30 days).",
+            description="Days of historical data to fetch (default: 90, max: 3650). "
+            "Capped at the provider's own limit (e.g. Garmin: 30 days, Polar: 365 days); "
+            "the response `days` reflects the window scheduled for sync.",
             ge=1,
-            le=365,
+            le=3650,
         ),
     ] = DEFAULT_HISTORICAL_DAYS,
 ) -> dict[str, Any]:
     """Trigger a historical sync of the user's data from a connected provider.
 
     Each provider strategy decides how to dispatch the sync (REST polling,
-    webhook backfill, etc.). The ``days`` parameter may be ignored by
-    providers that enforce their own limits.
+    webhook backfill, etc.). The ``days`` parameter is capped at the
+    provider's ``max_historical_days``.
 
     **Automatic historical sync on connect (grace period)**
 
@@ -299,13 +297,8 @@ def sync_historical_data(
     """
     strategy = factory.get_provider(provider.value)
 
-    try:
-        result = strategy.start_historical_sync(user_id, days)
-    except UnsupportedProviderError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=exc.detail,
-        )
+    # UnsupportedProviderError is an InvalidInputError: the global handler answers 400
+    result = strategy.start_historical_sync(user_id, days)
 
     return {
         "success": True,

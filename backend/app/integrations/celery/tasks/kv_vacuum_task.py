@@ -9,14 +9,13 @@ returns it.
 Scheduled via Cloud Scheduler at 02:30 UTC (see scheduler_jobs in tfvars).
 """
 
-from logging import getLogger
-
 from celery import shared_task
 from sqlalchemy import text
 
 from app.database import engine
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @shared_task
@@ -29,5 +28,5 @@ def vacuum_kv_expired() -> dict[str, int]:
             deleted[table] = res.rowcount
     total = sum(deleted.values())
     if total > 0:
-        logger.info("kv_store vacuum: removed %s rows: %s", total, deleted)
+        logger.info("kv_store vacuum done", removed=total, deleted=deleted)
     return deleted

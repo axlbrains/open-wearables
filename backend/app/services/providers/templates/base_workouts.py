@@ -1,4 +1,3 @@
-import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -31,7 +30,6 @@ class BaseWorkoutsTemplate(ABC):
         self.provider_name = provider_name
         self.api_base_url = api_base_url
         self.oauth = oauth
-        self.logger = logging.getLogger(self.__class__.__name__)
 
     @abstractmethod
     def get_workouts(
@@ -133,15 +131,8 @@ class BaseWorkoutsTemplate(ABC):
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         json_data: dict[str, Any] | None = None,
-        *,
-        quiet_statuses: tuple[int, ...] = (),
     ) -> Any:
-        """Make authenticated request to vendor API.
-
-        ``quiet_statuses`` are statuses the caller expects and handles itself (a
-        manual Strava activity has no streams, say). They still raise, but are not
-        reported as errors first — see ``make_authenticated_request``.
-        """
+        """Make authenticated request to vendor API."""
         return make_authenticated_request(
             db=db,
             user_id=user_id,
@@ -154,5 +145,4 @@ class BaseWorkoutsTemplate(ABC):
             params=params,
             headers=headers,
             json_data=json_data,
-            quiet_statuses=quiet_statuses,
         )

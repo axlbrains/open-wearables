@@ -13,9 +13,8 @@ from tests.factories import ApiKeyFactory
 
 @pytest.fixture(autouse=True)
 def mock_celery_tasks() -> Generator[MagicMock, None, None]:
-    """The fork queues through dispatch_task, not a raw Celery ``.delay()``."""
-    with patch("app.api.routes.v1.sdk_sync.dispatch_task") as mock:
-        mock.return_value = None
+    with patch("app.api.routes.v1.sdk_sync.process_sdk_upload") as mock:
+        mock.delay.return_value = None
         yield mock
 
 
@@ -41,7 +40,7 @@ class TestSDKProviderAlias:
         response = _post(client, api_v1_prefix, "google")
 
         assert response.status_code == 202
-        assert mock_celery_tasks.call_args.kwargs["kwargs"]["provider"] == "health_connect"
+        assert mock_celery_tasks.delay.call_args.kwargs["provider"] == "health_connect"
 
     def test_alias_is_applied_to_the_stored_payload(
         self, client: TestClient, api_v1_prefix: str, mock_celery_tasks: MagicMock
@@ -49,7 +48,7 @@ class TestSDKProviderAlias:
         """The worker re-reads provider from the payload, so the body must carry the canonical slug."""
         _post(client, api_v1_prefix, "google")
 
-        content = json.loads(mock_celery_tasks.call_args.kwargs["kwargs"]["content"])
+        content = json.loads(mock_celery_tasks.delay.call_args.kwargs["content"])
         assert content["provider"] == "health_connect"
 
     def test_canonical_slug_is_accepted(
@@ -58,10 +57,10 @@ class TestSDKProviderAlias:
         response = _post(client, api_v1_prefix, "health_connect")
 
         assert response.status_code == 202
-        assert mock_celery_tasks.call_args.kwargs["kwargs"]["provider"] == "health_connect"
+        assert mock_celery_tasks.delay.call_args.kwargs["provider"] == "health_connect"
 
     def test_google_health_is_not_an_sdk_provider(self, client: TestClient, api_v1_prefix: str) -> None:
         """The cloud OAuth provider must not be reachable through the SDK upload endpoint."""
         response = _post(client, api_v1_prefix, "google_health")
 
-        assert response.status_code == 400
+        assert response.status_code == 422

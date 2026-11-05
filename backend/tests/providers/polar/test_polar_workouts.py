@@ -93,11 +93,9 @@ class TestPolarWorkoutsDateExtraction:
             duration="PT1H0M0S",  # 1 hour
         )
 
-        # Assert — 08:00 local at +1 is 07:00 UTC. Only the duration used to be asserted
-        # here, which is why the sign could be wrong for as long as it was.
+        # Assert: 08:00 local at +1 is 07:00 UTC
         assert start_date == datetime(2024, 1, 15, 7, 0, 0)
         assert end_date == datetime(2024, 1, 15, 8, 0, 0)
-        assert (end_date - start_date).total_seconds() == 3600  # 1 hour
 
     def test_extract_dates_with_offset_negative_offset(self, db: Session) -> None:
         """Test extracting dates with negative UTC offset."""
@@ -132,10 +130,9 @@ class TestPolarWorkoutsDateExtraction:
             duration="PT30M0S",  # 30 minutes
         )
 
-        # Assert — 08:00 local at -5 is 13:00 UTC
+        # Assert: 08:00 local at -5 is 13:00 UTC
         assert start_date == datetime(2024, 1, 15, 13, 0, 0)
         assert end_date == datetime(2024, 1, 15, 13, 30, 0)
-        assert (end_date - start_date).total_seconds() == 1800  # 30 minutes
 
     def test_extract_dates_not_implemented_fallback(self, db: Session) -> None:
         """Test that _extract_dates raises NotImplementedError for Polar."""
@@ -814,7 +811,7 @@ class TestPolarFitIngestion:
         the workout it belonged to -- four hours out in summer, for every Polar workout.
         """
         # Arrange
-        from app.models import SeriesSample, DataSource
+        from app.models import DataSource, SeriesSample
         from tests.fixtures.fit_builder import make_running_fit
 
         user = UserFactory()
@@ -854,7 +851,7 @@ class TestPolarFitIngestion:
         sample_polar_exercise: dict,
     ) -> None:
         # Arrange
-        from app.models import SeriesSample, DataSource
+        from app.models import DataSource, SeriesSample
         from tests.fixtures.fit_builder import make_running_fit
 
         user = UserFactory()
@@ -969,7 +966,7 @@ class TestPolarFitIngestion:
         # Assert
         assert mock_download.call_count == 1
 
-    @patch("app.services.providers.polar.workouts.log_and_capture_error")
+    @patch("app.services.providers.polar.workouts.logger")
     @patch("app.services.providers.polar.workouts.download_binary_content")
     def test_missing_fit_is_quiet_and_still_saves_the_workout(
         self,
@@ -1003,9 +1000,9 @@ class TestPolarFitIngestion:
         detail = workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar").workout_detail
         assert detail.distance == Decimal("10000")
         assert detail.average_speed is None
-        mock_capture.assert_not_called()
+        mock_capture.error.assert_not_called()
 
-    @patch("app.services.providers.polar.workouts.log_and_capture_error")
+    @patch("app.services.providers.polar.workouts.logger")
     @patch("app.services.providers.polar.workouts.download_binary_content")
     def test_a_real_download_failure_is_still_reported(
         self,
@@ -1031,7 +1028,7 @@ class TestPolarFitIngestion:
 
         # Assert
         assert workouts.workout_repo.get_by_external_id(db, user.id, "ABC123", provider="polar") is not None
-        mock_capture.assert_called_once()
+        mock_capture.error.assert_called_once()
 
     @patch("app.services.providers.polar.workouts.download_binary_content")
     def test_unparseable_fit_still_saves_the_workout(

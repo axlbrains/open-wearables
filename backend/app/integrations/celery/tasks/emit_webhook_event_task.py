@@ -9,7 +9,6 @@ own backoff schedule.
 
 from __future__ import annotations
 
-from logging import getLogger
 from typing import Any
 
 from celery import shared_task
@@ -18,8 +17,9 @@ from app.constants.celery_tasks import CeleryTask
 from app.database import SessionLocal
 from app.services import developer_service
 from app.services.outgoing_webhooks import svix as svix_service
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @shared_task(
@@ -40,7 +40,7 @@ def emit_webhook_event(
     added later to narrow the audience.
     """
     if not svix_service.is_enabled():
-        logger.debug("Svix is not configured — skipping webhook dispatch for event %s", event_type)
+        logger.debug("Svix is not configured — skipping webhook dispatch for event", event_type=event_type)
         return {"event_type": event_type, "sent": 0, "errors": []}
 
     with SessionLocal() as db:
@@ -72,9 +72,10 @@ def emit_webhook_event(
 
     if errors:
         logger.error(
-            "Webhook delivery failed for %d developer(s) on event %s",
-            len(errors),
-            event_type,
+            "Webhook delivery failed for some developers; scheduling retry",
+            alert=True,
+            event_type=event_type,
+            failed_count=len(errors),
         )
         raise RuntimeError(
             f"Webhook delivery failed for {len(errors)} of {sent + len(errors)} developer(s) "

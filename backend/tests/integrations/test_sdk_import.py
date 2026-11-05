@@ -5,7 +5,6 @@ Tests the full import flow for Apple HealthKit data via SDK.
 """
 
 import json
-import logging
 from decimal import Decimal
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -14,14 +13,16 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.orm import Session
 
+from app.constants.celery_tasks import CeleryTask
 from app.constants.series_types.sdk import get_series_type_from_metric_type
 from app.models import DataSource, EventRecord, EventRecordAggregate, MealDetails, SeriesSample, WorkoutDetails
-from app.schemas.enums import SeriesType, get_series_type_id
+from app.schemas.enums import ProviderName, SeriesType, get_series_type_id
+from app.schemas.enums.series_types import get_series_type_from_id
 from app.schemas.model_crud.activities import EventRecordQueryParams
 from app.schemas.providers.mobile_sdk import SyncRequest as SDKSyncRequest
 from app.services.event_record_service import event_record_service
 from app.services.sdk.import_service import ImportService
-from tests.factories import UserFactory
+from tests.factories import DataSourceFactory, EventRecordFactory, UserFactory
 
 SDK_ENVELOPE: dict[str, str] = {
     "provider": "apple",
@@ -42,7 +43,7 @@ def mock_sleep_redis() -> Any:
 
     with (
         patch("app.services.sdk.sleep_service.get_redis_client") as mock_get_redis,
-        patch("app.services.sdk.sleep_service.dispatch_task"),
+        patch("app.services.sdk.sleep_service.celery_app"),
     ):
         mock_get_redis.return_value = mock_redis
         yield mock_redis
@@ -54,7 +55,7 @@ class TestAppleSDKImport:
     @pytest.fixture
     def import_service(self) -> ImportService:
         """Create HealthKit import service instance."""
-        return ImportService(log=logging.getLogger("test"))
+        return ImportService()
 
     @pytest.fixture
     def sample_sdk_payload(self) -> dict[str, Any]:
@@ -173,6 +174,42 @@ class TestAppleSDKImport:
         assert details.distance == Decimal("2165.35")
         assert details.energy_burned == Decimal("180.00")  # 131.41 + 48.59
         assert details.total_elevation_gain == Decimal("15.57")
+
+    def test_sleep_a_busy_lock_keeps_out_is_saved_by_a_retrying_task(
+        self,
+        db: Session,
+        import_service: ImportService,
+        sample_sdk_payload: dict[str, Any],
+        mock_sleep_redis: MagicMock,
+    ) -> None:
+        """Another batch of the user holds the sleep lock: the rest is saved now, the sleep goes to a task."""
+        mock_sleep_redis.lock.return_value.acquire.return_value = False
+
+        with patch("app.services.sdk.sleep_service.celery_app") as celery:
+            result = import_service.load_data(db, sample_sdk_payload, str(UserFactory().id))
+
+        assert (result["workouts_saved"], result["sleep_saved"], result["dropped"]) == (1, 0, [])
+        task, (request_json, _) = celery.send_task.call_args.args[0], celery.send_task.call_args.kwargs["args"]
+        assert task == CeleryTask.SAVE_SDK_SLEEP
+        deferred = SDKSyncRequest.model_validate_json(request_json)
+        assert (len(deferred.data.sleep), deferred.data.records, deferred.data.workouts) == (
+            len(sample_sdk_payload["data"]["sleep"]),
+            [],
+            [],
+        )
+
+    def test_spans_cover_only_types_the_device_exports_itself(
+        self,
+        db: Session,
+        import_service: ImportService,
+        sample_sdk_payload: dict[str, Any],
+    ) -> None:
+        """A series filled from workout statistics has no export of its own on the device."""
+        result = import_service.load_data(db, sample_sdk_payload, str(UserFactory().id))
+
+        assert "weather_temperature" in result["types"]
+        assert "weather_temperature" not in result["spans"]
+        assert {"workouts", "sleep"} <= result["spans"].keys()
 
     def test_workout_statistics_are_mirrored_onto_their_workout(
         self,
@@ -562,7 +599,7 @@ class TestAppleSDKImportEdgeCases:
 
     @pytest.fixture
     def import_service(self) -> ImportService:
-        return ImportService(log=logging.getLogger("test"))
+        return ImportService()
 
     def test_import_workout_with_zero_duration(
         self,
@@ -716,6 +753,175 @@ class TestAppleSDKImportEdgeCases:
         assert details.energy_burned is None
 
 
+class TestSDKWorkoutStatisticMapping:
+    """Cycling, power and pedaling stats map onto workout detail fields, with a fixed precedence."""
+
+    @pytest.fixture
+    def import_service(self) -> ImportService:
+        return ImportService()
+
+    @staticmethod
+    def _ios_cycling_payload(values: list[dict[str, Any]]) -> dict[str, Any]:
+        """iOS 17+ outdoor ride, statistics as built by the iOS SDK's workout mapper."""
+        return {
+            **SDK_ENVELOPE,
+            "data": {
+                "workouts": [
+                    {
+                        "id": "6F1C2B9E-3D4A-4E8B-9C1D-2A7B5E8F0C31",
+                        "type": "cycling",
+                        "startDate": "2025-04-08T16:02:11Z",
+                        "endDate": "2025-04-08T17:14:40Z",
+                        "source": {
+                            "name": "Test Apple Watch",
+                            "bundleIdentifier": "com.apple.health",
+                            "deviceManufacturer": "Apple Inc.",
+                            "deviceModel": "Watch",
+                            "productType": "Watch7,5",
+                            "deviceSoftwareVersion": "11.2",
+                        },
+                        "values": values,
+                    }
+                ]
+            },
+        }
+
+    @staticmethod
+    def _samsung_session_payload(values: list[dict[str, Any]]) -> dict[str, Any]:
+        """Samsung Health cycling session; the Android SDK forwards every numeric ExerciseSession getter."""
+        return {
+            "provider": "samsung",
+            "sdkVersion": "1.0.0",
+            "syncTimestamp": "2025-04-10T12:00:00Z",
+            "data": {
+                "workouts": [
+                    {
+                        "id": "wrk-ride-001-s0",
+                        "parentId": "wrk-ride-001",
+                        "type": "cycling",
+                        "startDate": "2025-04-09T06:00:00Z",
+                        "endDate": "2025-04-09T07:10:00Z",
+                        "zoneOffset": "+02:00",
+                        "source": {
+                            "appId": "com.sec.android.app.shealth",
+                            "deviceId": "R9ZW30ABC12",
+                            "deviceName": "Galaxy Watch7",
+                            "deviceManufacturer": "Samsung",
+                            "deviceModel": "SM-R960",
+                            "deviceType": "watch",
+                        },
+                        "values": values,
+                    }
+                ]
+            },
+        }
+
+    @staticmethod
+    def _details(db: Session) -> WorkoutDetails:
+        workout = db.query(EventRecord).filter(EventRecord.category == "workout").one()
+        return db.query(WorkoutDetails).filter(WorkoutDetails.record_id == workout.id).one()
+
+    def test_ios_cycling_workout_maps_power_cadence_and_speed(self, db: Session, import_service: ImportService) -> None:
+        payload = self._ios_cycling_payload(
+            [
+                {"type": "duration", "unit": "s", "value": 4349.0},
+                {"type": "activeEnergyBurned", "unit": "kcal", "value": 712.3},
+                {"type": "distance", "unit": "m", "value": 34120.5},
+                {"type": "averageHeartRate", "unit": "bpm", "value": 148.2},
+                {"type": "averageCyclingPower", "unit": "W", "value": 182.4},
+                {"type": "averageCyclingCadence", "unit": "count/min", "value": 87.6},
+                {"type": "averageCyclingSpeed", "unit": "m/s", "value": 7.85},
+                {"type": "elevationAscended", "unit": "m", "value": 212.0},
+                {"type": "indoorWorkout", "unit": "bool", "value": 0},
+            ]
+        )
+
+        result = import_service.load_data(db, payload, str(UserFactory().id))
+
+        assert result["workouts_saved"] == 1
+        details = self._details(db)
+        assert details.average_watts == Decimal("182.4")
+        assert details.average_cadence == Decimal("87.6")
+        assert details.average_speed == Decimal("7.85")
+        assert details.max_watts is None
+        assert details.moving_time_seconds is None
+
+    def test_samsung_session_maps_power_and_rpm(self, db: Session, import_service: ImportService) -> None:
+        payload = self._samsung_session_payload(
+            [
+                {"type": "duration", "value": 4200000, "unit": "ms"},
+                {"type": "calories", "value": 655.0, "unit": "kcal"},
+                {"type": "distance", "value": 30215.0, "unit": "m"},
+                {"type": "meanHeartRate", "value": 139.0, "unit": "bpm"},
+                {"type": "meanSpeed", "value": 7.19, "unit": "m/s"},
+                {"type": "maxSpeed", "value": 14.2, "unit": "m/s"},
+                {"type": "meanPower", "value": 171.5, "unit": ""},
+                {"type": "maxPower", "value": 612.0, "unit": ""},
+                {"type": "meanRpm", "value": 84.0, "unit": ""},
+                # Forwarded by the SDK but deliberately not stored yet
+                {"type": "maxRpm", "value": 118.0, "unit": ""},
+                {"type": "count", "value": 0, "unit": ""},
+                {"type": "meanCalorieBurnRate", "value": 9.4, "unit": ""},
+                {"type": "maxCalorieBurnRate", "value": 17.1, "unit": ""},
+                {"type": "inclineDistance", "value": 9100.0, "unit": ""},
+                {"type": "declineDistance", "value": 8700.0, "unit": ""},
+            ]
+        )
+
+        result = import_service.load_data(db, payload, str(UserFactory().id))
+
+        assert result["workouts_saved"] == 1
+        details = self._details(db)
+        assert details.average_watts == Decimal("171.5")
+        assert details.max_watts == Decimal("612")
+        assert details.average_cadence == Decimal("84")
+        assert details.average_speed == Decimal("7.19")
+        assert details.max_speed == Decimal("14.2")
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_cycling_power_beats_running_power_in_any_order(
+        self, db: Session, import_service: ImportService, reverse: bool
+    ) -> None:
+        values = [
+            {"type": "averageRunningPower", "unit": "W", "value": 240.0},
+            {"type": "averageCyclingPower", "unit": "W", "value": 182.4},
+        ]
+        payload = self._ios_cycling_payload(values[::-1] if reverse else values)
+
+        import_service.load_data(db, payload, str(UserFactory().id))
+
+        assert self._details(db).average_watts == Decimal("182.4")
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_workout_average_speed_beats_sensor_speeds_in_any_order(
+        self, db: Session, import_service: ImportService, reverse: bool
+    ) -> None:
+        values = [
+            {"type": "averageRunningSpeed", "unit": "m/s", "value": 3.1},
+            {"type": "averageCyclingSpeed", "unit": "m/s", "value": 7.85},
+            {"type": "averageSpeed", "unit": "m/s", "value": 7.4},
+        ]
+        payload = self._ios_cycling_payload(values[::-1] if reverse else values)
+
+        import_service.load_data(db, payload, str(UserFactory().id))
+
+        assert self._details(db).average_speed == Decimal("7.4")
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_cycling_speed_beats_running_speed_in_any_order(
+        self, db: Session, import_service: ImportService, reverse: bool
+    ) -> None:
+        values = [
+            {"type": "averageRunningSpeed", "unit": "m/s", "value": 3.1},
+            {"type": "averageCyclingSpeed", "unit": "m/s", "value": 7.85},
+        ]
+        payload = self._ios_cycling_payload(values[::-1] if reverse else values)
+
+        import_service.load_data(db, payload, str(UserFactory().id))
+
+        assert self._details(db).average_speed == Decimal("7.85")
+
+
 class TestSDKImportUnitConversion:
     """Unit conversions applied in `_build_statistic_bundles`.
 
@@ -726,7 +932,7 @@ class TestSDKImportUnitConversion:
 
     @pytest.fixture
     def import_service(self) -> ImportService:
-        return ImportService(log=logging.getLogger("test"))
+        return ImportService()
 
     @staticmethod
     def _record(metric_type: str, value: float, unit: str | None = "") -> dict[str, Any]:
@@ -960,7 +1166,7 @@ class TestSDKImportPercentageScale:
 
     @pytest.fixture
     def import_service(self) -> ImportService:
-        return ImportService(log=logging.getLogger("test"))
+        return ImportService()
 
     @staticmethod
     def _record(metric_type: str, value: float) -> dict[str, Any]:
@@ -1058,7 +1264,7 @@ class TestSDKImportNutrition:
 
     @pytest.fixture
     def import_service(self) -> ImportService:
-        return ImportService(log=logging.getLogger("test"))
+        return ImportService()
 
     @staticmethod
     def _build_record(metric_type: str, value: float, unit: str) -> dict[str, Any]:
@@ -1143,7 +1349,7 @@ class TestSDKImportMealCorrelation:
 
     @pytest.fixture
     def import_service(self) -> ImportService:
-        return ImportService(log=logging.getLogger("test"))
+        return ImportService()
 
     @staticmethod
     def _correlation_record(correlation_id: str, end_date: str = "2026-09-18T12:00:00Z") -> dict[str, Any]:
@@ -1275,6 +1481,30 @@ class TestSDKImportMealCorrelation:
         }
         assert self._user_samples(db, user.id) == []
 
+    def test_meal_replay_joins_the_legacy_source_keyed_by_the_relaying_iphone(
+        self, db: Session, import_service: ImportService
+    ) -> None:
+        """Older iOS SDKs stored meals under the relaying iPhone's model; once the model is dropped at
+        ingest, the meal's app id re-keys that legacy source instead of storing the meal again."""
+        user = UserFactory()
+        legacy = DataSourceFactory(
+            user=user, provider=ProviderName.APPLE, device_model="iPhone16,1", source="MyFitnessPal"
+        )
+        EventRecordFactory(
+            data_source=legacy, category="meal", type="HKCorrelationTypeIdentifierFood", external_id="MEAL-1"
+        )
+        record = self._correlation_record("MEAL-1")
+        record["source"] = {**record["source"], "deviceModel": "iPhone16,1"}
+
+        import_service.load_data(db, self._build_payload([record]), str(user.id))
+        db.expire_all()
+
+        meal = db.query(EventRecord).filter(EventRecord.category == "meal").one()
+        assert meal.data_source_id == legacy.id
+        stamped = db.get(DataSource, legacy.id)
+        assert stamped.source_app_id == "com.myfitnesspal.mfp"
+        assert stamped.device_model is None
+
     def test_food_correlation_resync_updates_the_meal_in_place(
         self, db: Session, import_service: ImportService
     ) -> None:
@@ -1356,7 +1586,7 @@ class TestSDKImportAndroidFoodCorrelation:
 
     @pytest.fixture
     def import_service(self) -> ImportService:
-        return ImportService(log=logging.getLogger("test"))
+        return ImportService()
 
     def test_real_health_connect_payload_saves_meal_and_nutrients(
         self, db: Session, import_service: ImportService
@@ -1465,135 +1695,273 @@ class TestSDKImportAndroidFoodCorrelation:
         assert get_series_type_from_metric_type("DIETARY_FOLIC_ACID") == SeriesType.dietary_folic_acid
 
 
-class TestHealthConnectWorkoutFields:
-    """Energy left null when not sent, moving time from Health Connect segments."""
+class TestSDKWorkoutRouteAndSamples:
+    """workouts[].route and workouts[].samples become per-point series when ingest_workout_samples is on."""
 
     @pytest.fixture
     def import_service(self) -> ImportService:
-        return ImportService(log=logging.getLogger("test"))
+        return ImportService()
+
+    @pytest.fixture(autouse=True)
+    def ingest_workout_samples(self) -> Any:
+        with patch("app.services.sdk.import_service.settings", ingest_workout_samples=True) as mock_settings:
+            yield mock_settings
 
     @staticmethod
-    def _detail(
-        import_service: ImportService,
-        *,
-        provider: str = "health_connect",
-        values: list[dict[str, Any]] | None = None,
-        segments: list[dict[str, Any]] | None = None,
-    ) -> Any:
-        request = SDKSyncRequest(
-            **{
-                **SDK_ENVELOPE,
-                "provider": provider,
-                "data": {
-                    "workouts": [
-                        {
-                            "id": "hc-run-1",
-                            "type": "RUNNING",
-                            "startDate": "2026-09-18T12:44:00Z",
-                            "endDate": "2026-09-18T13:44:00Z",
-                            "source": {"name": "Fitbit", "bundleIdentifier": "com.fitbit.FitbitMobile"},
-                            "values": values
-                            if values is not None
-                            else [{"type": "duration", "value": 3600, "unit": "s"}],
-                            "segments": segments,
-                        }
-                    ]
-                },
-            }
-        )
-        [(_, detail, _)] = list(import_service._build_workout_bundles(request, str(uuid4())))
-        return detail
+    def _apple_payload() -> dict[str, Any]:
+        """iOS SDK shape: route only, no samples."""
+        return {
+            **SDK_ENVELOPE,
+            "data": {
+                "workouts": [
+                    {
+                        "id": "ROUTE-0000-1111-2222-333344445555",
+                        "type": "running",
+                        "startDate": "2025-05-01T06:00:00Z",
+                        "endDate": "2025-05-01T06:30:00Z",
+                        "zoneOffset": "+02:00",
+                        "source": {
+                            "name": "Apple Watch",
+                            "bundleIdentifier": "com.apple.health",
+                            "deviceManufacturer": "Apple Inc.",
+                            "deviceModel": "Watch",
+                            "productType": "Watch7,5",
+                        },
+                        "values": [{"type": "duration", "unit": "s", "value": 1800}],
+                        "route": [
+                            {
+                                "timestamp": "2025-05-01T06:00:01Z",
+                                "latitude": 52.229676,
+                                "longitude": 21.012229,
+                                "altitudeM": 101.5,
+                                "horizontalAccuracyM": 3.5,
+                                "verticalAccuracyM": 2.0,
+                                "speedMps": 2.9,
+                                "courseDeg": 90.0,
+                            },
+                            {
+                                "timestamp": "2025-05-01T06:00:02Z",
+                                "latitude": 52.229701,
+                                "longitude": 21.012301,
+                                "altitudeM": 101.7,
+                                "horizontalAccuracyM": 4.0,
+                                "verticalAccuracyM": 2.0,
+                            },
+                        ],
+                        "samples": None,
+                    }
+                ],
+            },
+        }
 
     @staticmethod
-    def _segment(start: str, end: str, kind: str) -> dict[str, Any]:
-        return {"startDate": f"2026-09-18T{start}:00Z", "endDate": f"2026-09-18T{end}:00Z", "type": kind}
+    def _samsung_payload() -> dict[str, Any]:
+        """Samsung SDK shape: ExerciseSession route + log samples."""
+        ts = "2026-02-24T06:01:00Z"
+        return {
+            "provider": "samsung",
+            "sdkVersion": "0.9.0",
+            "syncTimestamp": "2026-02-24T10:00:00Z",
+            "data": {
+                "workouts": [
+                    {
+                        "id": "wrk-001-s0",
+                        "parentId": "wrk-001",
+                        "type": "RUNNING",
+                        "startDate": "2026-02-24T06:00:00Z",
+                        "endDate": "2026-02-24T06:45:00Z",
+                        "zoneOffset": "+01:00",
+                        "source": {
+                            "appId": "com.sec.android.app.shealth",
+                            "deviceId": "R9ZW30ABC12",
+                            "deviceName": "Galaxy Watch7",
+                            "deviceManufacturer": "Samsung",
+                            "deviceModel": "SM-R960",
+                            "deviceType": "watch",
+                        },
+                        "values": [{"type": "duration", "value": 2700000, "unit": "ms"}],
+                        "route": [
+                            {
+                                "timestamp": ts,
+                                "latitude": 52.229676,
+                                "longitude": 21.012229,
+                                "altitudeM": 142.0,
+                                "horizontalAccuracyM": 3.5,
+                                "verticalAccuracyM": None,
+                            }
+                        ],
+                        "samples": [
+                            {"timestamp": ts, "type": "heartRate", "value": 110.0, "unit": "bpm"},
+                            {"timestamp": ts, "type": "cadence", "value": 155.0, "unit": "spm"},
+                            {"timestamp": ts, "type": "speed", "value": 1.8, "unit": "m/s"},
+                            {"timestamp": ts, "type": "power", "value": 240.0, "unit": "W"},
+                        ],
+                    }
+                ],
+            },
+        }
 
-    def test_energy_is_null_when_no_energy_statistic(self, import_service: ImportService) -> None:
-        detail = self._detail(import_service)
-
-        assert detail.energy_burned is None
-
-    def test_energy_still_summed_when_sent(self, import_service: ImportService) -> None:
-        detail = self._detail(
-            import_service,
-            values=[
-                {"type": "activeEnergyBurned", "value": 300, "unit": "kcal"},
-                {"type": "basalEnergyBurned", "value": 50, "unit": "kcal"},
-            ],
+    @staticmethod
+    def _series(db: Session, user_id: UUID) -> dict[SeriesType, list[SeriesSample]]:
+        rows = (
+            db.query(SeriesSample)
+            .join(DataSource)
+            .filter(DataSource.user_id == user_id)
+            .order_by(SeriesSample.recorded_at)
+            .all()
         )
+        result: dict[SeriesType, list[SeriesSample]] = {}
+        for row in rows:
+            result.setdefault(get_series_type_from_id(row.series_type_definition_id), []).append(row)
+        return result
 
-        assert detail.energy_burned == Decimal("350")
+    def test_ios_route_stored_as_latitude_longitude_elevation(self, db: Session, import_service: ImportService) -> None:
+        user = UserFactory()
 
-    def test_moving_time_is_the_active_segments(self, import_service: ImportService) -> None:
-        """Fitbit marks only the running part of a longer session."""
-        detail = self._detail(import_service, segments=[self._segment("13:14", "13:41", "running")])
+        result = import_service.load_data(db, self._apple_payload(), str(user.id))
 
-        assert detail.moving_time_seconds == 27 * 60
+        series = self._series(db, user.id)
+        assert set(series) == {SeriesType.latitude, SeriesType.longitude, SeriesType.elevation}
+        assert all(len(rows) == 2 for rows in series.values())
+        assert result["records_saved"] == 6
+        # Tolerance instead of equality: the value column precision is widened separately.
+        assert abs(float(series[SeriesType.latitude][0].value) - 52.229676) < 0.001
+        assert abs(float(series[SeriesType.longitude][0].value) - 21.012229) < 0.001
+        assert series[SeriesType.elevation][1].value == Decimal("101.7")
+        assert series[SeriesType.latitude][0].zone_offset == "+02:00"
 
-    def test_moving_time_subtracts_pauses_when_only_pauses_are_segmented(self, import_service: ImportService) -> None:
-        detail = self._detail(
-            import_service,
-            segments=[self._segment("13:00", "13:10", "other_39"), self._segment("13:20", "13:25", "rest")],
-        )
+    def test_route_and_samples_share_the_workout_data_source(self, db: Session, import_service: ImportService) -> None:
+        user = UserFactory()
 
-        assert detail.moving_time_seconds == 45 * 60
+        import_service.load_data(db, self._samsung_payload(), str(user.id))
 
-    def test_active_and_idle_segments_count_only_the_active_ones(self, import_service: ImportService) -> None:
-        detail = self._detail(
-            import_service,
-            segments=[
-                self._segment("12:44", "13:04", "running"),
-                self._segment("13:04", "13:09", "rest"),
-                self._segment("13:09", "13:29", "running"),
-            ],
-        )
+        workout = db.query(EventRecord).filter(EventRecord.category == "workout").one()
+        series = self._series(db, user.id)
+        assert {row.data_source_id for rows in series.values() for row in rows} == {workout.data_source_id}
 
-        assert detail.moving_time_seconds == 40 * 60
+    def test_samsung_samples_and_route_stored(self, db: Session, import_service: ImportService) -> None:
+        user = UserFactory()
 
-    def test_no_segments_no_moving_time(self, import_service: ImportService) -> None:
-        assert self._detail(import_service).moving_time_seconds is None
+        import_service.load_data(db, self._samsung_payload(), str(user.id))
 
-    def test_malformed_segments_are_ignored(self, import_service: ImportService) -> None:
-        detail = self._detail(import_service, segments=[{"type": "running"}, {"startDate": "x", "endDate": "y"}])
+        series = self._series(db, user.id)
+        values = {st: rows[0].value for st, rows in series.items()}
+        assert values[SeriesType.heart_rate] == Decimal("110")
+        assert values[SeriesType.cadence] == Decimal("155")
+        assert values[SeriesType.speed] == Decimal("1.8")
+        assert values[SeriesType.power] == Decimal("240")
+        assert values[SeriesType.elevation] == Decimal("142")
+        assert {SeriesType.latitude, SeriesType.longitude} <= set(series)
 
-        assert detail.moving_time_seconds is None
+    def test_repush_upserts_instead_of_duplicating(self, db: Session, import_service: ImportService) -> None:
+        user = UserFactory()
+        payload = self._samsung_payload()
 
-    def test_pauses_are_subtracted_from_elapsed_time_not_the_duration_statistic(
-        self, import_service: ImportService
+        first = import_service.load_data(db, payload, str(user.id))
+        payload["data"]["workouts"][0]["samples"][0]["value"] = 112.0
+        second = import_service.load_data(db, payload, str(user.id))
+
+        series = self._series(db, user.id)
+        assert all(len(rows) == 1 for rows in series.values())
+        assert series[SeriesType.heart_rate][0].value == Decimal("112")
+        assert first["records_inserted"] == 7
+        assert second["records_inserted"] == 0
+        assert second["records_updated"] == 7
+
+    def test_standalone_heart_rate_at_the_same_timestamp_is_one_row(
+        self, db: Session, import_service: ImportService
     ) -> None:
-        """A 60 min session with a 50 min duration statistic and a 10 min pause moved for 50 min."""
-        detail = self._detail(
-            import_service,
-            values=[{"type": "duration", "value": 3000, "unit": "s"}],
-            segments=[self._segment("13:00", "13:10", "other_39")],
-        )
+        """A heart rate record from the same device and second as a workout sample upserts into one row."""
+        user = UserFactory()
+        payload = self._samsung_payload()
+        workout = payload["data"]["workouts"][0]
+        payload["data"]["records"] = [
+            {
+                "id": "hr-1",
+                "type": "HEART_RATE",
+                "startDate": "2026-02-24T06:01:00Z",
+                "endDate": "2026-02-24T06:01:00Z",
+                "source": workout["source"],
+                "value": 111.0,
+                "unit": "bpm",
+            }
+        ]
 
-        assert detail.moving_time_seconds == 50 * 60
+        import_service.load_data(db, payload, str(user.id))
 
-    def test_segment_with_mixed_offset_awareness_is_ignored(self, import_service: ImportService) -> None:
-        detail = self._detail(
-            import_service,
-            segments=[
-                {"startDate": "2026-09-18T13:14:00", "endDate": "2026-09-18T13:41:00Z", "type": "running"},
-                self._segment("13:00", "13:10", "running"),
-            ],
-        )
+        assert len(self._series(db, user.id)[SeriesType.heart_rate]) == 1
 
-        assert detail.moving_time_seconds == 10 * 60
+    def test_unknown_sample_type_and_missing_timestamp_are_skipped(
+        self, db: Session, import_service: ImportService
+    ) -> None:
+        user = UserFactory()
+        payload = self._samsung_payload()
+        workout = payload["data"]["workouts"][0]
+        workout["route"] = [{"timestamp": None, "latitude": 1.0, "longitude": 2.0}]
+        workout["samples"] = [
+            {"timestamp": "2026-02-24T06:01:00Z", "type": "strideLength", "value": 1.1, "unit": "m"},
+            {"timestamp": None, "type": "heartRate", "value": 120.0, "unit": "bpm"},
+            {"timestamp": "2026-02-24T06:02:00Z", "type": "heartRate", "value": 121.0, "unit": "bpm"},
+        ]
 
-    def test_segment_without_a_type_is_not_counted_as_active(self, import_service: ImportService) -> None:
-        detail = self._detail(
-            import_service,
-            segments=[
-                {"startDate": "2026-09-18T13:14:00Z", "endDate": "2026-09-18T13:41:00Z"},
-                {"startDate": "2026-09-18T13:00:00Z", "endDate": "2026-09-18T13:05:00Z", "type": None},
-                self._segment("12:50", "13:00", "rest"),
-            ],
-        )
+        with patch("app.services.sdk.import_service.logger") as logger:
+            result = import_service.load_data(db, payload, str(user.id))
 
-        assert detail.moving_time_seconds == 50 * 60
+        assert result["workouts_saved"] == 1
+        assert result["dropped"] == []
+        assert {st: len(rows) for st, rows in self._series(db, user.id).items()} == {SeriesType.heart_rate: 1}
+        assert logger.debug.call_args.args == ("Skipped workout samples with unsupported types or units",)
 
-    def test_apple_segments_are_not_interpreted(self, import_service: ImportService) -> None:
-        detail = self._detail(import_service, provider="apple", segments=[self._segment("13:14", "13:41", "running")])
+    def test_sample_with_unexpected_unit_is_skipped(self, db: Session, import_service: ImportService) -> None:
+        """A km/h speed would land in the m/s series at the wrong scale, so it's not stored."""
+        user = UserFactory()
+        payload = self._samsung_payload()
+        workout = payload["data"]["workouts"][0]
+        workout["route"] = None
+        workout["samples"] = [
+            {"timestamp": "2026-02-24T06:01:00Z", "type": "speed", "value": 6.5, "unit": "km/h"},
+            {"timestamp": "2026-02-24T06:02:00Z", "type": "speed", "value": 1.8, "unit": "M/S"},
+            {"timestamp": "2026-02-24T06:03:00Z", "type": "cadence", "value": 85.0, "unit": "rpm"},
+            {"timestamp": "2026-02-24T06:04:00Z", "type": "power", "value": 210.0, "unit": None},
+        ]
 
-        assert detail.moving_time_seconds is None
+        import_service.load_data(db, payload, str(user.id))
+
+        series = self._series(db, user.id)
+        assert [row.value for row in series[SeriesType.speed]] == [Decimal("1.8")]
+        assert len(series[SeriesType.cadence]) == 1
+        assert len(series[SeriesType.power]) == 1
+
+    def test_malformed_route_point_or_sample_keeps_the_workout(
+        self, db: Session, import_service: ImportService
+    ) -> None:
+        user = UserFactory()
+        payload = self._samsung_payload()
+        workout = payload["data"]["workouts"][0]
+        workout["route"] += [
+            {"timestamp": "2026-02-24T06:02:00Z", "latitude": "north", "longitude": 21.0},
+            {"timestamp": "2026-02-24T06:03:00Z", "latitude": float("nan"), "longitude": 21.0},
+        ]
+        workout["samples"] += [
+            {"timestamp": "not a date", "type": "heartRate", "value": 120.0},
+            {"timestamp": "2026-02-24T06:03:00Z", "type": "heartRate", "value": float("inf"), "unit": "bpm"},
+        ]
+
+        result = import_service.load_data(db, payload, str(user.id))
+
+        assert result["workouts_saved"] == 1
+        assert result["dropped"] == []
+        series = self._series(db, user.id)
+        assert len(series[SeriesType.latitude]) == 1
+        assert len(series[SeriesType.heart_rate]) == 1
+
+    def test_nothing_stored_when_ingest_workout_samples_is_off(
+        self, db: Session, import_service: ImportService, ingest_workout_samples: Any
+    ) -> None:
+        ingest_workout_samples.ingest_workout_samples = False
+        user = UserFactory()
+
+        result = import_service.load_data(db, self._samsung_payload(), str(user.id))
+
+        assert result["workouts_saved"] == 1
+        assert self._series(db, user.id) == {}

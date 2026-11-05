@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.integrations.celery.core import create_celery
-from app.integrations.task_dispatcher import RegisteredTask
 from app.services.event_record_service import event_record_service
 from tests.factories import DeveloperFactory
 from tests.utils import developer_auth_headers
@@ -55,19 +54,18 @@ class TestArchivalDisabled:
 
         assert response.status_code == 401
 
-    # The fork routes the trigger through the task dispatcher (prod has no Celery broker).
-    @patch("app.api.routes.v1.archival.dispatch_task")
+    @patch("app.api.routes.v1.archival.run_daily_archival")
     def test_enabled_passes_through(
-        self, mock_dispatch: MagicMock, client: TestClient, db: Session, api_v1_prefix: str
+        self, mock_task: MagicMock, client: TestClient, db: Session, api_v1_prefix: str
     ) -> None:
-        mock_dispatch.return_value.id = "task-123"
+        mock_task.delay.return_value.id = "task-123"
         headers = developer_auth_headers(DeveloperFactory().id)
 
         with patch.object(settings, "data_lifecycle_enabled", True):
             response = client.post(f"{api_v1_prefix}/settings/archival/run", headers=headers)
 
         assert response.status_code == 202
-        mock_dispatch.assert_called_once_with(RegisteredTask.RUN_DAILY_ARCHIVAL)
+        mock_task.delay.assert_called_once()
 
 
 class TestBeatSchedule:

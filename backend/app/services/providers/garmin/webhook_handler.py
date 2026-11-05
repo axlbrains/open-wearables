@@ -11,15 +11,15 @@ ignored and the endpoint still returns 200 so Garmin stops retrying.
 
 import contextlib
 import json
-import logging
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import HTTPException, Request
+from celery import current_app as celery_app
+from fastapi import Request
 
 from app.config import settings
+from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.repositories import UserConnectionRepository
 from app.services.providers.garmin.backfill_state import (
     get_backfill_status,
@@ -37,9 +37,10 @@ from app.services.providers.garmin.oauth import GarminOAuth
 from app.services.providers.garmin.workouts import GarminWorkouts
 from app.services.providers.templates.base_webhook_handler import BaseWebhookHandler
 from app.services.raw_payload_storage import store_raw_payload
-from app.utils.structured_logging import log_structured
+from app.utils.exceptions import InvalidInputError
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 WELLNESS_TYPES: list[str] = [
     "dailies",
@@ -95,9 +96,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
     def verify_signature(self, request: Request, body: bytes) -> bool:
         expected = settings.garmin_client_id
         if not expected:
-            log_structured(
-                logger,
-                "error",
+            logger.error(
                 "GARMIN_CLIENT_ID not configured; rejecting webhook",
                 provider="garmin",
                 action="webhook_signature_missing_secret",
@@ -106,9 +105,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
 
         provided = request.headers.get("garmin-client-id", "")
         if not provided:
-            log_structured(
-                logger,
-                "warning",
+            logger.warning(
                 "Missing garmin-client-id header",
                 provider="garmin",
                 action="webhook_signature_invalid",
@@ -116,9 +113,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
             return False
 
         if not self._verify_token(expected, provided):
-            log_structured(
-                logger,
-                "warning",
+            logger.warning(
                 "garmin-client-id header does not match configured value",
                 provider="garmin",
                 action="webhook_signature_invalid",
@@ -131,7 +126,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
         try:
             return json.loads(body)
         except (json.JSONDecodeError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+            raise InvalidInputError("Invalid JSON body") from exc
 
     def dispatch(self, db: DbSession, payload: dict[str, Any]) -> dict[str, Any]:
         """Accept the webhook and enqueue async processing.
@@ -152,9 +147,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
                 if isinstance(item, dict) and item.get("userId")
             }
         )
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Received Garmin webhook",
             provider="garmin",
             trace_id=request_trace_id,
@@ -164,20 +157,16 @@ class GarminWebhookHandler(BaseWebhookHandler):
 
         store_raw_payload(source="webhook", provider="garmin", payload=payload, trace_id=request_trace_id)
 
-        # garmin_sync is isolated from the default queue (via TaskDefinition.celery_queue
-        # in app/integrations/task_dispatcher.py) so high-volume live-push events
-        # and backfill-chain tasks don't starve each other.
-        handle = dispatch_task(
-            RegisteredTask.PROCESS_WEBHOOK_PUSH,
-            args=["garmin", payload, request_trace_id],
+        # garmin_sync is isolated from the default queue so high-volume live-push
+        # events and backfill-chain tasks don't starve each other.
+        task = celery_app.send_task(
+            CeleryTask.PROCESS_WEBHOOK_PUSH, args=["garmin", payload, request_trace_id], queue=CeleryQueue.GARMIN_SYNC
         )
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Enqueued Garmin webhook processing task",
             provider="garmin",
             trace_id=request_trace_id,
-            task_id=handle.id,
+            task_id=getattr(task, "id", None),
         )
 
         return {"status": "accepted"}
@@ -276,9 +265,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
                 continue
 
             items = payload[data_type]
-            log_structured(
-                logger,
-                "info",
+            logger.info(
                 "Processing wellness notifications",
                 provider="garmin",
                 trace_id=request_trace_id,
@@ -310,9 +297,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
                     db, self.connection_repo, payload["userPermissionsChange"], request_trace_id
                 )
             except Exception as e:
-                log_structured(
-                    logger,
-                    "error",
+                logger.error(
                     "Failed to process permission changes",
                     provider="garmin",
                     trace_id=request_trace_id,
@@ -326,9 +311,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
                     db, self.connection_repo, self.oauth, payload["deregistrations"], request_trace_id
                 )
             except Exception as e:
-                log_structured(
-                    logger,
-                    "error",
+                logger.error(
                     "Failed to process deregistrations",
                     provider="garmin",
                     trace_id=request_trace_id,
@@ -342,9 +325,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
             backfill_status = get_backfill_status(user_id_str)
             if backfill_status["overall_status"] in ("in_progress", "retry_in_progress"):
                 trace_id = get_trace_id(user_id_str) or request_trace_id
-                log_structured(
-                    logger,
-                    "info",
+                logger.info(
                     "Triggering next backfill",
                     provider="garmin",
                     trace_id=trace_id,
@@ -352,10 +333,7 @@ class GarminWebhookHandler(BaseWebhookHandler):
                     current_window=backfill_status["current_window"],
                     total_windows=backfill_status["total_windows"],
                 )
-                dispatch_task(
-                    RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE,
-                    args=[user_id_str],
-                )
+                celery_app.send_task(CeleryTask.GARMIN_TRIGGER_NEXT_PENDING_TYPE, args=[user_id_str])
                 backfill_triggered.append(user_id_str)
         return backfill_triggered
 

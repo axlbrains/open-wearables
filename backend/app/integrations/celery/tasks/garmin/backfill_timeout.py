@@ -5,14 +5,13 @@ for classifying errors that should stop the entire backfill chain.
 """
 
 from datetime import datetime, timezone
-from logging import getLogger
 from typing import Any
 
+from celery import current_app as celery_app
 from celery import shared_task
 
 from app.constants.celery_tasks import CeleryTask
 from app.integrations.redis_client import get_redis_client
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.services.providers.garmin.backfill_config import (
     DELAY_BETWEEN_TYPES,
     TRIGGERED_TIMEOUT_SECONDS,
@@ -31,9 +30,9 @@ from app.services.providers.garmin.backfill_state import (
     record_timed_out_entry,
     update_window_cell,
 )
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _classify_chain_stop_error(status_code: int | None, error_text: str) -> tuple[str, str] | None:
@@ -93,9 +92,7 @@ def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
     status = get_redis_client().get(_get_key(user_id_str, "types", data_type, "status"))
 
     if status != "triggered":
-        log_structured(
-            logger,
-            "info",
+        logger.info(
             "Timeout check: type already resolved",
             provider="garmin",
             trace_id=trace_id,
@@ -112,9 +109,7 @@ def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
         elapsed = (datetime.now(timezone.utc) - triggered_at).total_seconds()
         if elapsed < TRIGGERED_TIMEOUT_SECONDS:
             remaining = int(TRIGGERED_TIMEOUT_SECONDS - elapsed) + 1
-            log_structured(
-                logger,
-                "info",
+            logger.info(
                 "Timeout check: not yet expired, rescheduling",
                 provider="garmin",
                 trace_id=trace_id,
@@ -124,11 +119,7 @@ def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
                 remaining=remaining,
                 user_id=user_id_str,
             )
-            dispatch_task(
-                RegisteredTask.CHECK_GARMIN_TRIGGERED_TIMEOUT,
-                args=[user_id_str, data_type],
-                countdown=remaining,
-            )
+            check_triggered_timeout.apply_async(args=[user_id_str, data_type], countdown=remaining)
             return {"status": "rescheduled", "remaining": remaining}
 
     mark_type_timed_out(user_id_str, data_type)
@@ -141,7 +132,7 @@ def check_triggered_timeout(user_id: str, data_type: str) -> dict[str, Any]:
     else:
         record_timed_out_entry(user_id_str, data_type, get_current_window(user_id_str))
 
-    dispatch_task(RegisteredTask.TRIGGER_GARMIN_NEXT_PENDING_TYPE, args=[user_id_str], countdown=DELAY_BETWEEN_TYPES)
+    celery_app.send_task(CeleryTask.GARMIN_TRIGGER_NEXT_PENDING_TYPE, args=[user_id_str], countdown=DELAY_BETWEEN_TYPES)
 
     skip_count = get_type_skip_count(user_id_str, data_type)
     return {

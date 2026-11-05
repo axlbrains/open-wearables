@@ -9,15 +9,16 @@ Tests cover:
 - Pagination and sorting
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import event as sa_event
 from sqlalchemy.orm import Session
 
 from app.models import EventRecord
 from app.repositories.event_record_repository import EventRecordRepository
-from app.schemas.enums import ProviderName
 from app.schemas.model_crud.activities import EventRecordCreate, EventRecordQueryParams
 from tests.factories import DataSourceFactory, EventRecordFactory, UserFactory
 
@@ -511,63 +512,72 @@ class TestEventRecordRepository:
         assert mapping_result.device_model == "watch1"
 
 
-class TestGetSleepEndDates:
-    """Wake-up dates of stored sleep, used to skip re-fetching nights."""
+class TestFindAdjacentSleepRecord:
+    """A night only merges with the same writer app's record, so Oura via HealthKit never joins the Watch's (#720)."""
 
-    @pytest.fixture
-    def event_repo(self) -> EventRecordRepository:
-        return EventRecordRepository(EventRecord)
+    NIGHT_START = datetime(2026, 3, 24, 22, tzinfo=timezone.utc)
 
-    def _sleep(self, data_source: object, end: datetime, zone_offset: str | None = None) -> None:
-        EventRecordFactory(
-            data_source=data_source,
+    def _night(self, user: Any, source_app_id: str, hours_later: int = 0) -> EventRecord:
+        start = self.NIGHT_START + timedelta(hours=hours_later)
+        return EventRecordFactory(
+            data_source=DataSourceFactory(
+                user=user, provider="apple", source="unknown", device_model=None, source_app_id=source_app_id
+            ),
             category="sleep",
             type_="sleep_session",
-            start_datetime=end - timedelta(hours=8),
-            end_datetime=end,
-            duration_seconds=8 * 3600,
-            zone_offset=zone_offset,
+            start_datetime=start,
+            end_datetime=start + timedelta(hours=8),
         )
 
-    def test_dates_by_local_wake_up_date(self, db: Session, event_repo: EventRecordRepository) -> None:
-        user = UserFactory()
-        polar = DataSourceFactory(user=user, provider=ProviderName.POLAR, source=None)
-        # 01:00 local in UTC+3 is the evening before in UTC
-        self._sleep(polar, datetime(2026, 9, 4, 22, 0, tzinfo=timezone.utc), "+03:00")
-        # 20:00 local in UTC-8 is the next morning in UTC
-        self._sleep(polar, datetime(2026, 9, 3, 4, 0, tzinfo=timezone.utc), "-08:00")
-        # Window edges are local dates too: in on 2026-09-01, out on 2026-09-08
-        self._sleep(polar, datetime(2026, 8, 31, 22, 30, tzinfo=timezone.utc), "+02:00")
-        self._sleep(polar, datetime(2026, 9, 7, 23, 0, tzinfo=timezone.utc), "+02:00")
-
-        dates = event_repo.get_sleep_end_dates(db, user.id, "polar", date(2026, 9, 1), date(2026, 9, 7))
-
-        assert dates == {date(2026, 9, 5), date(2026, 9, 2), date(2026, 9, 1)}
-
-    def test_matches_provider_when_source_is_empty(self, db: Session, event_repo: EventRecordRepository) -> None:
-        user = UserFactory()
-        # Pull-ingested rows carry the provider but no source
-        polar = DataSourceFactory(user=user, provider=ProviderName.POLAR, source=None)
-        self._sleep(polar, datetime(2026, 9, 1, 7, 0, tzinfo=timezone.utc))
-        self._sleep(polar, datetime(2026, 9, 3, 6, 30, tzinfo=timezone.utc))
-
-        dates = event_repo.get_sleep_end_dates(db, user.id, "polar", date(2026, 9, 1), date(2026, 9, 7))
-
-        assert dates == {date(2026, 9, 1), date(2026, 9, 3)}
-
-    def test_ignores_other_providers_users_categories_and_dates(
-        self, db: Session, event_repo: EventRecordRepository
-    ) -> None:
-        user = UserFactory()
-        polar = DataSourceFactory(user=user, provider=ProviderName.POLAR, source=None)
-        self._sleep(
-            DataSourceFactory(user=user, provider=ProviderName.OURA, source=None),
-            datetime(2026, 9, 2, 7, 0, tzinfo=timezone.utc),
+    def _adjacent(self, db: Session, user: Any, source_app_id: str | None) -> EventRecord | None:
+        return EventRecordRepository(EventRecord).find_adjacent_sleep_record(
+            db,
+            user.id,
+            self.NIGHT_START + timedelta(hours=8),
+            self.NIGHT_START + timedelta(hours=9),
+            120,
+            provider="apple",
+            source_app_id=source_app_id,
         )
-        self._sleep(
-            DataSourceFactory(provider=ProviderName.POLAR, source=None), datetime(2026, 9, 2, 7, 0, tzinfo=timezone.utc)
-        )
-        self._sleep(polar, datetime(2026, 8, 20, 7, 0, tzinfo=timezone.utc))
-        EventRecordFactory(data_source=polar, start_datetime=datetime(2026, 9, 4, 7, 0, tzinfo=timezone.utc))
 
-        assert event_repo.get_sleep_end_dates(db, user.id, "polar", date(2026, 9, 1), date(2026, 9, 7)) == set()
+    def test_locks_only_the_sleep_record(self, db: Session) -> None:
+        """The data source stays unlocked: the rollup takes it (by FK) before the record, so locking both deadlocks."""
+        user = UserFactory()
+        self._night(user, "com.apple.health.11111111")
+        statements: list[str] = []
+
+        def capture(*args: Any) -> None:
+            statements.append(args[2])
+
+        sa_event.listen(db.get_bind(), "before_cursor_execute", capture)
+        try:
+            self._adjacent(db, user, "com.apple.health.11111111")
+        finally:
+            sa_event.remove(db.get_bind(), "before_cursor_execute", capture)
+
+        locking = [s for s in statements if "FOR UPDATE" in s]
+        assert len(locking) == 1
+        assert locking[0].rstrip().endswith("FOR UPDATE OF event_record")
+
+    def test_matches_only_the_same_writer_app(self, db: Session) -> None:
+        user = UserFactory()
+        watch = self._night(user, "com.apple.health.11111111")
+        oura = self._night(user, "com.ouraring.oura", hours_later=1)
+
+        assert self._adjacent(db, user, "com.ouraring.oura") == oura
+        assert self._adjacent(db, user, "com.apple.health.11111111") == watch
+
+    def test_apple_own_sources_count_as_one_writer(self, db: Session) -> None:
+        """The iPhone's in-bed sample belongs to the Watch's night."""
+        user = UserFactory()
+        watch = self._night(user, "com.apple.health.11111111")
+        self._night(user, "com.ouraring.oura", hours_later=1)
+
+        assert self._adjacent(db, user, "com.apple.health.22222222") == watch
+
+    def test_without_a_writer_app_any_record_matches(self, db: Session) -> None:
+        user = UserFactory()
+        self._night(user, "com.apple.health.11111111")
+        oura = self._night(user, "com.ouraring.oura", hours_later=1)
+
+        assert self._adjacent(db, user, None) == oura

@@ -1,14 +1,14 @@
 """Celery task for processing CSV file imports."""
 
-from logging import getLogger
 from uuid import UUID
 
 from celery import shared_task
 
 from app.database import SessionLocal
 from app.services.csv_import import csv_import_service
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @shared_task(
@@ -38,5 +38,5 @@ def process_csv_import(
             user_id=UUID(user_id),
             source_format=source_format,
         )
-        logger.info("CSV import task complete: %s", result)
+        logger.info("CSV import task complete", result=str(result))
         return result

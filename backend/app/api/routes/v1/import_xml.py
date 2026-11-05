@@ -5,7 +5,8 @@ from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, sta
 from pydantic import ValidationError
 
 from app.config import settings
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
+from app.integrations.celery.tasks.process_aws_upload_task import complete_and_process_aws_upload
+from app.integrations.celery.tasks.process_xml_upload_task import process_xml_upload
 from app.schemas.providers.apple.apple_xml import (
     MultipartAbortRequest,
     MultipartAbortResponse,
@@ -98,16 +99,12 @@ def complete_multipart_upload(
             request.parts,
         )
         try:
-            task = dispatch_task(
-                RegisteredTask.COMPLETE_AND_PROCESS_AWS_UPLOAD,
-                kwargs={
-                    "bucket_name": bucket_name,
-                    "object_key": request.key,
-                    "upload_id": request.upload_id,
-                    "parts": [part.model_dump() for part in request.parts],
-                    "user_id": user_id,
-                },
-                dedup_key=f"xml_multipart_complete:{request.upload_id}",
+            task = complete_and_process_aws_upload.delay(
+                bucket_name=bucket_name,
+                object_key=request.key,
+                upload_id=request.upload_id,
+                parts=[part.model_dump() for part in request.parts],
+                user_id=user_id,
             )
         except Exception as e:
             # The object has deliberately not been finalized yet, so callers can safely
@@ -164,19 +161,11 @@ def import_xml_file(
     file_contents = file.file.read()
     filename = file.filename or "upload.xml"
 
-    task = dispatch_task(
-        RegisteredTask.PROCESS_XML_UPLOAD,
-        kwargs={
-            "file_contents": file_contents,
-            "filename": filename,
-            "user_id": user_id,
-        },
-        dedup_key=f"xml_upload:{user_id}:{filename}",
-    )
+    task = process_xml_upload.delay(file_contents=file_contents, filename=filename, user_id=user_id)
 
     return {
         "status": "processing",
-        "task_id": task.id or "",
+        "task_id": task.id,
         "user_id": user_id,
     }
 
@@ -190,7 +179,8 @@ async def receive_sns_notification(
     try:
         notification = SNSNotification.model_validate(json.loads(body))
     except (ValidationError, JSONDecodeError) as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        # the parse error, which quotes the body, goes to the access log only
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid SNS notification") from e
 
     result = await sns_service.handle_sns_notification(notification)
 

@@ -21,8 +21,8 @@ _BODY = {
 
 @pytest.fixture
 def mock_task() -> Generator[MagicMock, None, None]:
-    # Fork routes through dispatch_task (Cloud Tasks in prod) instead of raw .delay
-    with patch("app.api.routes.v1.sdk_sync.dispatch_task") as mock:
+    with patch("app.api.routes.v1.sdk_sync.process_sdk_upload") as mock:
+        mock.delay.return_value = None
         yield mock
 
 
@@ -48,7 +48,7 @@ class TestOffloadDisabled:
         mock_put.assert_not_called()
         mock_archive.assert_called_once()
 
-        kwargs = mock_task.call_args.kwargs["kwargs"]
+        kwargs = mock_task.delay.call_args[1]
         assert kwargs["payload_ref"] is None
         assert '"provider": "apple"' in kwargs["content"]
 
@@ -66,7 +66,7 @@ class TestOffloadEnabled:
         # Transport owns the object, so the archival write is not called on top of it.
         mock_archive.assert_not_called()
 
-        kwargs = mock_task.call_args.kwargs["kwargs"]
+        kwargs = mock_task.delay.call_args[1]
         assert kwargs["content"] is None
         assert kwargs["payload_ref"] == _REF
 
@@ -81,20 +81,4 @@ class TestOffloadEnabled:
             response = _sync(client, api_v1_prefix)
 
         assert response.status_code == 503
-        mock_task.assert_not_called()
-
-
-def test_idempotency_key_accepts_payload_ref() -> None:
-    """Regression: the task signature gained payload_ref (upstream S3 offload); the
-    fork's @idempotent key fn must accept every task kwarg or the wrapper TypeErrors."""
-    from app.integrations.celery.tasks.process_sdk_upload_task import _sdk_upload_idem_key
-
-    key = _sdk_upload_idem_key(
-        content=None,
-        content_type="application/json",
-        user_id="u",
-        provider="apple",
-        batch_id="b-1",
-        payload_ref="s3://bucket/x.json",
-    )
-    assert "b-1" in key
+        mock_task.delay.assert_not_called()

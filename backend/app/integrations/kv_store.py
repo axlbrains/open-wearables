@@ -34,7 +34,6 @@ shape that ``app/integrations/redis_client.py`` can return it interchangeably.
 
 from __future__ import annotations
 
-import logging
 import threading
 import time as time_module
 from datetime import datetime, timedelta, timezone
@@ -44,7 +43,9 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
-logger = logging.getLogger(__name__)
+from app.utils.structured_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def _now() -> datetime:
@@ -83,13 +84,13 @@ class _Pipeline:
         for name, args, kwargs in self._ops:
             method = getattr(self._client, name, None)
             if method is None:
-                logger.warning("kv_store pipeline: unknown op %r — skipping", name)
+                logger.warning("kv_store pipeline: unknown op, skipping", op=name)
                 results.append(None)
                 continue
             try:
                 results.append(method(*args, **kwargs))
             except Exception as exc:
-                logger.warning("kv_store pipeline op %r failed: %s", name, exc, exc_info=True)
+                logger.warning("kv_store pipeline op failed", op=name, exc_info=exc)
                 results.append(exc)
         self._ops.clear()
         return results
@@ -150,7 +151,9 @@ class _Lock:
             # Best-effort semantics (pre-existing shim behaviour): proceed without
             # the lock rather than raising LockError like redis-py would.
             logger.warning(
-                "kv_store: lock %s not acquired within %ss; proceeding unlocked", self._key, self._blocking_timeout
+                "kv_store: lock not acquired in time; proceeding unlocked",
+                lock_key=self._key,
+                blocking_timeout=self._blocking_timeout,
             )
         return self
 
@@ -499,7 +502,7 @@ class KvStoreClient:
 
     def ltrim(self, list_key: str, start: int, end: int) -> bool:
         if start != 0 or end < 0:
-            logger.debug("kv_store: ltrim with non-prefix range (%s..%s) — partial support", start, end)
+            logger.debug("kv_store: ltrim with non-prefix range, partial support", start=start, end=end)
         keep = max(0, end - start + 1) if end >= 0 else None
         with self._engine.begin() as conn:
             if keep is None:

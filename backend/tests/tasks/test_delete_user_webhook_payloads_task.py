@@ -11,7 +11,6 @@ from svix.api import BulkExpungeContentsOut, BulkExpungeStatus
 from svix.api.errors.http_error import HttpError
 
 from app.integrations.celery.tasks.delete_user_webhook_payloads_task import delete_user_webhook_payloads
-from app.integrations.task_dispatcher import RegisteredTask
 from app.services import user_service
 from app.services.outgoing_webhooks import svix as svix_service
 from tests.factories import UserFactory
@@ -127,7 +126,7 @@ class TestDeleteUserWebhookPayloadsTask:
 
         assert result == {"user_id": result["user_id"], "deleted": 2, "errors": []}
 
-    @patch("app.integrations.celery.tasks.delete_user_webhook_payloads_task.log_and_capture_error")
+    @patch("app.integrations.celery.tasks.delete_user_webhook_payloads_task.logger")
     @patch("app.integrations.celery.tasks.delete_user_webhook_payloads_task.svix_service")
     @patch("app.integrations.celery.tasks.delete_user_webhook_payloads_task.developer_service")
     def test_retries_when_an_app_fails(
@@ -143,8 +142,9 @@ class TestDeleteUserWebhookPayloadsTask:
         ):
             delete_user_webhook_payloads(str(uuid4()))
         mock_retry.assert_called_once()
-        mock_capture.assert_called_once()
-        assert mock_capture.call_args.kwargs["extra"]["app_id"] == str(app_id)
+        mock_capture.error.assert_called_once()
+        assert mock_capture.error.call_args.kwargs["exc_info"] is not None
+        assert mock_capture.error.call_args.kwargs["app_id"] == str(app_id)
 
     @patch("app.integrations.celery.tasks.delete_user_webhook_payloads_task.svix_service")
     @patch("app.integrations.celery.tasks.delete_user_webhook_payloads_task.developer_service")
@@ -170,7 +170,7 @@ class TestDeleteUserWebhookPayloadsTask:
 
 
 class TestUserDeleteSchedulesPayloadDeletion:
-    @patch("app.services.user_service.dispatch_task")
+    @patch("app.services.user_service.delete_user_webhook_payloads")
     def test_schedules_payload_deletion_after_user_delete(self, mock_task: MagicMock, db: Session) -> None:
         user = UserFactory()
         user_id = user.id
@@ -179,13 +179,12 @@ class TestUserDeleteSchedulesPayloadDeletion:
             user_service.delete(db, user_id)
 
         assert user_service.get(db, user_id) is None
-        mock_task.assert_called_once()
-        assert mock_task.call_args.args[0] is RegisteredTask.DELETE_USER_WEBHOOK_PAYLOADS
-        assert mock_task.call_args.kwargs["args"] == [str(user_id)]
+        mock_task.apply_async.assert_called_once()
+        assert mock_task.apply_async.call_args.kwargs["args"] == [str(user_id)]
 
-    @patch("app.services.user_service.dispatch_task")
+    @patch("app.services.user_service.delete_user_webhook_payloads")
     def test_delete_succeeds_when_scheduling_fails(self, mock_task: MagicMock, db: Session) -> None:
-        mock_task.side_effect = ConnectionError("broker down")
+        mock_task.apply_async.side_effect = ConnectionError("broker down")
         user = UserFactory()
         user_id = user.id
 
@@ -194,11 +193,11 @@ class TestUserDeleteSchedulesPayloadDeletion:
 
         assert user_service.get(db, user_id) is None
 
-    @patch("app.services.user_service.dispatch_task")
+    @patch("app.services.user_service.delete_user_webhook_payloads")
     def test_skips_when_svix_disabled(self, mock_task: MagicMock, db: Session) -> None:
         user = UserFactory()
 
         with patch("app.services.user_service.svix_service.is_enabled", return_value=False):
             user_service.delete(db, user.id)
 
-        mock_task.assert_not_called()
+        mock_task.apply_async.assert_not_called()

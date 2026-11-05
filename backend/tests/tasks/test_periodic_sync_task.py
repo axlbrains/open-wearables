@@ -2,8 +2,6 @@
 Tests for sync_all_users periodic Celery task.
 
 Tests the periodic task that syncs data for all users with active connections.
-The fork dispatches per-user syncs through dispatch_task (prod has no Celery
-broker), so the mock is the dispatcher and its payload sits under kwargs=.
 """
 
 from unittest.mock import MagicMock, patch
@@ -11,7 +9,6 @@ from unittest.mock import MagicMock, patch
 from sqlalchemy.orm import Session
 
 from app.integrations.celery.tasks.periodic_sync_task import sync_all_users
-from app.integrations.task_dispatcher import RegisteredTask
 from app.repositories.provider_settings_repository import ProviderSettingsRepository
 from app.schemas.auth import ConnectionStatus, LiveSyncMode
 from tests.factories import UserConnectionFactory, UserFactory
@@ -21,7 +18,7 @@ class TestSyncAllUsersTask:
     """Test suite for sync_all_users periodic task."""
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
-    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.sync_vendor_data")
     def test_sync_all_users_with_active_connections(
         self,
         mock_sync_vendor_data: MagicMock,
@@ -47,16 +44,16 @@ class TestSyncAllUsersTask:
 
         # Assert
         assert result["users_for_sync"] == 3
-        assert mock_sync_vendor_data.call_count == 3
+        assert mock_sync_vendor_data.delay.call_count == 3
 
         # Verify each user was queued for sync
-        call_args_list = [call.kwargs["kwargs"]["user_id"] for call in mock_sync_vendor_data.call_args_list]
+        call_args_list = [call.kwargs["user_id"] for call in mock_sync_vendor_data.delay.call_args_list]
         assert str(user1.id) in call_args_list
         assert str(user2.id) in call_args_list
         assert str(user3.id) in call_args_list
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
-    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.sync_vendor_data")
     def test_sync_all_users_with_date_range(
         self,
         mock_sync_vendor_data: MagicMock,
@@ -80,13 +77,14 @@ class TestSyncAllUsersTask:
 
         # Assert
         assert result["users_for_sync"] == 1
-        mock_sync_vendor_data.assert_called_once_with(
-            RegisteredTask.SYNC_VENDOR_DATA,
-            kwargs={"user_id": str(user.id), "start_date": start_date, "end_date": end_date},
+        mock_sync_vendor_data.delay.assert_called_once_with(
+            user_id=str(user.id),
+            start_date=start_date,
+            end_date=end_date,
         )
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
-    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.sync_vendor_data")
     def test_sync_all_users_skips_disconnected_users(
         self,
         mock_sync_vendor_data: MagicMock,
@@ -113,14 +111,14 @@ class TestSyncAllUsersTask:
 
         # Assert
         assert result["users_for_sync"] == 1
-        mock_sync_vendor_data.assert_called_once()
+        mock_sync_vendor_data.delay.assert_called_once()
 
         # Verify only user1 was queued
-        call_kwargs = mock_sync_vendor_data.call_args.kwargs["kwargs"]
+        call_kwargs = mock_sync_vendor_data.delay.call_args.kwargs
         assert call_kwargs["user_id"] == str(user1.id)
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
-    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.sync_vendor_data")
     def test_sync_all_users_no_users(
         self,
         mock_sync_vendor_data: MagicMock,
@@ -138,10 +136,10 @@ class TestSyncAllUsersTask:
 
         # Assert
         assert result["users_for_sync"] == 0
-        mock_sync_vendor_data.assert_not_called()
+        mock_sync_vendor_data.delay.assert_not_called()
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
-    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.sync_vendor_data")
     def test_sync_all_users_multiple_connections_per_user(
         self,
         mock_sync_vendor_data: MagicMock,
@@ -167,13 +165,10 @@ class TestSyncAllUsersTask:
         # Assert
         # User should only be counted once despite having 3 connections
         assert result["users_for_sync"] == 1
-        mock_sync_vendor_data.assert_called_once_with(
-            RegisteredTask.SYNC_VENDOR_DATA,
-            kwargs={"user_id": str(user.id), "start_date": None, "end_date": None},
-        )
+        mock_sync_vendor_data.delay.assert_called_once_with(user_id=str(user.id), start_date=None, end_date=None)
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
-    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.sync_vendor_data")
     def test_sync_all_users_mixed_connection_statuses(
         self,
         mock_sync_vendor_data: MagicMock,
@@ -205,15 +200,15 @@ class TestSyncAllUsersTask:
 
         # Assert
         assert result["users_for_sync"] == 2  # Only user1 and user2
-        assert mock_sync_vendor_data.call_count == 2
+        assert mock_sync_vendor_data.delay.call_count == 2
 
-        call_args_list = [call.kwargs["kwargs"]["user_id"] for call in mock_sync_vendor_data.call_args_list]
+        call_args_list = [call.kwargs["user_id"] for call in mock_sync_vendor_data.delay.call_args_list]
         assert str(user1.id) in call_args_list
         assert str(user2.id) in call_args_list
         assert str(user3.id) not in call_args_list
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
-    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.sync_vendor_data")
     def test_sync_all_users_queues_async_tasks(
         self,
         mock_sync_vendor_data: MagicMock,
@@ -232,12 +227,13 @@ class TestSyncAllUsersTask:
         # Act
         sync_all_users()
 
-        # Assert - the sync was dispatched (async execution)
-        mock_sync_vendor_data.assert_called_once()
+        # Assert - verify .delay() was called (async execution)
+        mock_sync_vendor_data.delay.assert_called_once()
         # Verify .apply() or direct call was NOT used
+        mock_sync_vendor_data.apply.assert_not_called() if hasattr(mock_sync_vendor_data, "apply") else None
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
-    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.sync_vendor_data")
     def test_sync_all_users_large_batch(
         self,
         mock_sync_vendor_data: MagicMock,
@@ -261,15 +257,15 @@ class TestSyncAllUsersTask:
 
         # Assert
         assert result["users_for_sync"] == 10
-        assert mock_sync_vendor_data.call_count == 10
+        assert mock_sync_vendor_data.delay.call_count == 10
 
         # Verify all users were queued
-        call_args_list = [call.kwargs["kwargs"]["user_id"] for call in mock_sync_vendor_data.call_args_list]
+        call_args_list = [call.kwargs["user_id"] for call in mock_sync_vendor_data.delay.call_args_list]
         for user in users:
             assert str(user.id) in call_args_list
 
     @patch("app.integrations.celery.tasks.periodic_sync_task.SessionLocal")
-    @patch("app.integrations.celery.tasks.periodic_sync_task.dispatch_task")
+    @patch("app.integrations.celery.tasks.periodic_sync_task.sync_vendor_data")
     def test_sync_all_users_skips_users_without_a_pull_mode_connection(
         self,
         mock_sync_vendor_data: MagicMock,
@@ -291,7 +287,4 @@ class TestSyncAllUsersTask:
         result = sync_all_users()
 
         assert result["users_for_sync"] == 1
-        mock_sync_vendor_data.assert_called_once_with(
-            RegisteredTask.SYNC_VENDOR_DATA,
-            kwargs={"user_id": str(pull_user.id), "start_date": None, "end_date": None},
-        )
+        mock_sync_vendor_data.delay.assert_called_once_with(user_id=str(pull_user.id), start_date=None, end_date=None)

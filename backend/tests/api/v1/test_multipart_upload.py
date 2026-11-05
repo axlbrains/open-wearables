@@ -49,7 +49,7 @@ class TestCreateMultipart:
             headers=headers,
             json={"filename": "export.xml", "file_size": 1024},  # below 5 MiB minimum
         )
-        assert response.status_code in (400, 422)
+        assert response.status_code == 422
 
 
 class TestSignMultipart:
@@ -101,8 +101,8 @@ class TestCompleteMultipart:
         headers = api_key_headers(ApiKeyFactory().plain_key)
         key = f"{user.id}/raw/export.xml"
 
-        with patch("app.api.routes.v1.import_xml.dispatch_task") as mock_task:
-            mock_task.return_value = MagicMock(id="task-123")
+        with patch("app.api.routes.v1.import_xml.complete_and_process_aws_upload") as mock_task:
+            mock_task.delay.return_value = MagicMock(id="task-123")
             response = client.post(
                 BASE.format(user_id=user.id) + "/complete",
                 headers=headers,
@@ -114,15 +114,13 @@ class TestCompleteMultipart:
         assert data["status"] == "processing"
         assert data["task_id"] == "task-123"
         assert data["bucket"] == "test-bucket"
-        mock_task.assert_called_once()
-        dispatched = mock_task.call_args.kwargs["kwargs"]
-        assert dispatched == {
-            "bucket_name": "test-bucket",
-            "object_key": key,
-            "upload_id": "test-upload-id",
-            "parts": [{"part_number": 1, "etag": "e1"}],
-            "user_id": str(user.id),
-        }
+        mock_task.delay.assert_called_once_with(
+            bucket_name="test-bucket",
+            object_key=key,
+            upload_id="test-upload-id",
+            parts=[{"part_number": 1, "etag": "e1"}],
+            user_id=str(user.id),
+        )
         mock_external_apis["s3"].complete_multipart_upload.assert_not_called()
 
     def test_complete_client_mode_keeps_upload_incomplete_when_queueing_fails(
@@ -137,8 +135,8 @@ class TestCompleteMultipart:
         headers = api_key_headers(ApiKeyFactory().plain_key)
         key = f"{user.id}/raw/export.xml"
 
-        with patch("app.api.routes.v1.import_xml.dispatch_task") as mock_task:
-            mock_task.side_effect = RuntimeError("broker unavailable")
+        with patch("app.api.routes.v1.import_xml.complete_and_process_aws_upload") as mock_task:
+            mock_task.delay.side_effect = RuntimeError("broker unavailable")
             response = client.post(
                 BASE.format(user_id=user.id) + "/complete",
                 headers=headers,
@@ -161,7 +159,7 @@ class TestCompleteMultipart:
         headers = api_key_headers(ApiKeyFactory().plain_key)
         key = f"{user.id}/raw/export.xml"
 
-        with patch("app.api.routes.v1.import_xml.dispatch_task") as mock_task:
+        with patch("app.api.routes.v1.import_xml.complete_and_process_aws_upload") as mock_task:
             response = client.post(
                 BASE.format(user_id=user.id) + "/complete",
                 headers=headers,
@@ -170,7 +168,7 @@ class TestCompleteMultipart:
 
         assert response.status_code == 200
         assert response.json()["status"] == "uploaded"
-        mock_task.assert_not_called()
+        mock_task.delay.assert_not_called()
 
     def test_complete_rejects_foreign_key(
         self, client: TestClient, db: Session, mock_external_apis: dict[str, MagicMock]

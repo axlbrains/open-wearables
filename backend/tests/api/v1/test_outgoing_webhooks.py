@@ -3,7 +3,7 @@
 Covers:
 - WebhookEventType enum (#717)
 - webhook_emit helpers (#719, #721)
-- emit_webhook_event task (dispatched via task_dispatcher)
+- emit_webhook_event Celery task
 - outgoing_webhooks API router (#722-726)
 """
 
@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.integrations.celery.tasks.emit_webhook_event_task import emit_webhook_event
-from app.integrations.task_dispatcher import RegisteredTask
 from app.schemas.enums import SeriesType
 from app.schemas.model_crud.activities import TimeSeriesSampleCreate
 from app.schemas.sync_status import SyncRunContext, SyncScope, SyncSource
@@ -44,21 +43,6 @@ from tests.factories import DeveloperFactory, UserFactory
 
 # Svix eventId charset: colons/plus signs from ISO 8601 timestamps must not survive.
 _SVIX_ID_SAFE_RE = re.compile(r"^[a-zA-Z0-9\-_.]+$")
-
-# ---------------------------------------------------------------------------
-# Helpers — outgoing webhook helpers route through dispatch_task now, so
-# extract event_type / payload from the dispatch_task(...) call shape:
-#   dispatch_task(RegisteredTask.EMIT_WEBHOOK_EVENT, args=[event_type, payload], kwargs={...})
-# ---------------------------------------------------------------------------
-
-
-def _event_type_of(call: Any) -> str:
-    return call.kwargs["args"][0]
-
-
-def _payload_of(call: Any) -> dict[str, Any]:
-    return call.kwargs["args"][1]
-
 
 # ---------------------------------------------------------------------------
 # WebhookEventType enum
@@ -87,8 +71,8 @@ class TestWebhookEmit:
         with patch("app.services.outgoing_webhooks.svix.is_enabled", return_value=True):
             yield
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
-    def test_on_workout_created_dispatches(self, mock_dispatch: MagicMock) -> None:
+    @patch("app.services.outgoing_webhooks.events.celery_app")
+    def test_on_workout_created_dispatches(self, mock_task: MagicMock) -> None:
         uid = uuid4()
         rid = uuid4()
         on_workout_created(
@@ -108,18 +92,16 @@ class TestWebhookEmit:
             elevation_gain_meters=120.0,
             avg_pace_sec_per_km=360,
         )
-        mock_dispatch.assert_called_once()
-        call = mock_dispatch.call_args
-        assert call.args[0] == RegisteredTask.EMIT_WEBHOOK_EVENT
-        assert _event_type_of(call) == "workout.created"
-        payload = _payload_of(call)
-        assert payload["data"]["source"]["provider"] == "garmin"
-        assert payload["data"]["calories_kcal"] == 450.0
-        assert payload["data"]["distance_meters"] == 10000.0
-        assert payload["data"]["avg_heart_rate_bpm"] == 155
+        mock_task.send_task.assert_called_once()
+        args = mock_task.send_task.call_args
+        assert args.kwargs["args"][0] == "workout.created"
+        assert args.kwargs["args"][1]["data"]["source"]["provider"] == "garmin"
+        assert args.kwargs["args"][1]["data"]["calories_kcal"] == 450.0
+        assert args.kwargs["args"][1]["data"]["distance_meters"] == 10000.0
+        assert args.kwargs["args"][1]["data"]["avg_heart_rate_bpm"] == 155
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
-    def test_on_sleep_created_dispatches(self, mock_dispatch: MagicMock) -> None:
+    @patch("app.services.outgoing_webhooks.events.celery_app")
+    def test_on_sleep_created_dispatches(self, mock_task: MagicMock) -> None:
         uid = uuid4()
         rid = uuid4()
         on_sleep_created(
@@ -141,20 +123,19 @@ class TestWebhookEmit:
                 {"stage": "light", "start_time": "2026-01-01T22:00:00", "end_time": "2026-01-01T22:30:00"}
             ],
         )
-        mock_dispatch.assert_called_once()
-        call = mock_dispatch.call_args
-        assert _event_type_of(call) == "sleep.created"
-        payload = _payload_of(call)
-        assert payload["data"]["efficiency_percent"] == 85.0
-        assert payload["data"]["stages"]["deep_minutes"] == 90
-        assert payload["data"]["sleep_duration_seconds"] == 27000
-        assert payload["data"]["sleep_stage_intervals"][0]["stage"] == "light"
-        assert payload["data"]["source"]["source"] == "oura"
-        assert payload["data"]["source"]["device_type"] == "ring"
-        assert payload["data"]["source"]["device_name"] == "Oura Ring Gen3"
+        mock_task.send_task.assert_called_once()
+        args = mock_task.send_task.call_args
+        assert args.kwargs["args"][0] == "sleep.created"
+        assert args.kwargs["args"][1]["data"]["efficiency_percent"] == 85.0
+        assert args.kwargs["args"][1]["data"]["stages"]["deep_minutes"] == 90
+        assert args.kwargs["args"][1]["data"]["sleep_duration_seconds"] == 27000
+        assert args.kwargs["args"][1]["data"]["sleep_stage_intervals"][0]["stage"] == "light"
+        assert args.kwargs["args"][1]["data"]["source"]["source"] == "oura"
+        assert args.kwargs["args"][1]["data"]["source"]["device_type"] == "ring"
+        assert args.kwargs["args"][1]["data"]["source"]["device_name"] == "Oura Ring Gen3"
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
-    def test_on_timeseries_batch_saved_dispatches(self, mock_dispatch: MagicMock) -> None:
+    @patch("app.services.outgoing_webhooks.events.celery_app")
+    def test_on_timeseries_batch_saved_dispatches(self, mock_task: MagicMock) -> None:
         uid = uuid4()
         samples = [
             {
@@ -183,14 +164,15 @@ class TestWebhookEmit:
             end_time="2026-04-16T06:05:00+00:00",
             samples=samples,
         )
-        mock_dispatch.assert_called()
-        assert mock_dispatch.call_count == 2
-        calls = {_event_type_of(c) for c in mock_dispatch.call_args_list}
+        mock_task.send_task.assert_called()
+        assert mock_task.send_task.call_count == 2
+        calls = {c.kwargs["args"][0] for c in mock_task.send_task.call_args_list}
         assert "heart_rate.created" in calls
         assert "series.heart_rate.created" in calls
         # validate payload on the group event
-        group_call = next(c for c in mock_dispatch.call_args_list if _event_type_of(c) == "heart_rate.created")
-        data = _payload_of(group_call)["data"]
+        group_call = next(c for c in mock_task.send_task.call_args_list if c.kwargs["args"][0] == "heart_rate.created")
+        args = group_call
+        data = args.kwargs["args"][1]["data"]
         assert data["start_time"] == "2026-04-16T06:00:00+00:00"
         assert data["end_time"] == "2026-04-16T06:05:00+00:00"
         assert len(data["samples"]) == 2
@@ -198,8 +180,8 @@ class TestWebhookEmit:
         assert data["samples"][1]["value"] == 65.0
         assert "chunk_index" not in data
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
-    def test_on_timeseries_batch_saved_without_samples(self, mock_dispatch: MagicMock) -> None:
+    @patch("app.services.outgoing_webhooks.events.celery_app")
+    def test_on_timeseries_batch_saved_without_samples(self, mock_task: MagicMock) -> None:
         """Backward-compatible call without samples still dispatches correctly."""
         uid = uuid4()
         on_timeseries_batch_saved(
@@ -208,17 +190,17 @@ class TestWebhookEmit:
             series_type="heart_rate",
             sample_count=100,
         )
-        assert mock_dispatch.call_count == 2
-        calls = {_event_type_of(c) for c in mock_dispatch.call_args_list}
+        assert mock_task.send_task.call_count == 2
+        calls = {c.kwargs["args"][0] for c in mock_task.send_task.call_args_list}
         assert "heart_rate.created" in calls
         assert "series.heart_rate.created" in calls
-        group_call = next(c for c in mock_dispatch.call_args_list if _event_type_of(c) == "heart_rate.created")
-        data = _payload_of(group_call)["data"]
+        group_call = next(c for c in mock_task.send_task.call_args_list if c.kwargs["args"][0] == "heart_rate.created")
+        data = group_call.kwargs["args"][1]["data"]
         assert data["samples"] == []
         assert data["sample_count"] == 100
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
-    def test_on_timeseries_batch_saved_chunks_large_payload(self, mock_dispatch: MagicMock) -> None:
+    @patch("app.services.outgoing_webhooks.events.celery_app")
+    def test_on_timeseries_batch_saved_chunks_large_payload(self, mock_task: MagicMock) -> None:
         """Batches exceeding SVIX_MAX_SAMPLES_PER_EVENT are split into chunk events."""
         uid = uuid4()
         large_samples = [
@@ -242,11 +224,11 @@ class TestWebhookEmit:
             samples=large_samples,
         )
         # 2 chunks × 2 event types (group + granular) = 4 calls
-        assert mock_dispatch.call_count == 4
-        group_calls = [c for c in mock_dispatch.call_args_list if _event_type_of(c) == "heart_rate.created"]
+        assert mock_task.send_task.call_count == 4
+        group_calls = [c for c in mock_task.send_task.call_args_list if c.kwargs["args"][0] == "heart_rate.created"]
         assert len(group_calls) == 2
-        first_data = _payload_of(group_calls[0])["data"]
-        second_data = _payload_of(group_calls[1])["data"]
+        first_data = group_calls[0].kwargs["args"][1]["data"]
+        second_data = group_calls[1].kwargs["args"][1]["data"]
         assert first_data["chunk_index"] == 0
         assert first_data["total_chunks"] == 2
         assert second_data["chunk_index"] == 1
@@ -257,8 +239,8 @@ class TestWebhookEmit:
         assert first_data["sample_count"] == len(large_samples)
         assert second_data["sample_count"] == len(large_samples)
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
-    def test_on_timeseries_skips_unmapped_series_type(self, mock_dispatch: MagicMock) -> None:
+    @patch("app.services.outgoing_webhooks.events.celery_app")
+    def test_on_timeseries_skips_unmapped_series_type(self, mock_task: MagicMock) -> None:
         uid = uuid4()
         on_timeseries_batch_saved(
             user_id=uid,
@@ -266,10 +248,10 @@ class TestWebhookEmit:
             series_type="unknown_type_xyz",
             sample_count=5,
         )
-        mock_dispatch.assert_not_called()
+        mock_task.send_task.assert_not_called()
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
-    def test_on_connection_created_dispatches(self, mock_dispatch: MagicMock) -> None:
+    @patch("app.services.outgoing_webhooks.events.celery_app")
+    def test_on_connection_created_dispatches(self, mock_task: MagicMock) -> None:
         uid = uuid4()
         cid = uuid4()
         on_connection_created(
@@ -278,17 +260,16 @@ class TestWebhookEmit:
             connection_id=cid,
             connected_at="2026-01-01T12:00:00+00:00",
         )
-        mock_dispatch.assert_called_once()
-        call = mock_dispatch.call_args
-        assert _event_type_of(call) == "connection.created"
-        payload = _payload_of(call)
-        assert payload["data"]["provider"] == "garmin"
-        assert payload["data"]["connection_id"] == str(cid)
+        mock_task.send_task.assert_called_once()
+        args = mock_task.send_task.call_args
+        assert args.kwargs["args"][0] == "connection.created"
+        assert args.kwargs["args"][1]["data"]["provider"] == "garmin"
+        assert args.kwargs["args"][1]["data"]["connection_id"] == str(cid)
         # connected_at's colons/offset must not leak into the Svix event_id
-        assert _SVIX_ID_SAFE_RE.match(call.kwargs["kwargs"]["idempotency_key"])
+        assert _SVIX_ID_SAFE_RE.match(args.kwargs["kwargs"]["idempotency_key"])
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
-    def test_on_connection_revoked_dispatches(self, mock_dispatch: MagicMock) -> None:
+    @patch("app.services.outgoing_webhooks.events.celery_app")
+    def test_on_connection_revoked_dispatches(self, mock_task: MagicMock) -> None:
         uid = uuid4()
         cid = uuid4()
         on_connection_revoked(
@@ -298,23 +279,24 @@ class TestWebhookEmit:
             reason="refresh_failed",
             revoked_at="2026-01-01T12:00:00.123456+00:00",
         )
-        mock_dispatch.assert_called_once()
-        call = mock_dispatch.call_args
-        assert _event_type_of(call) == "connection.revoked"
-        payload = _payload_of(call)
-        assert payload["data"]["provider"] == "garmin"
-        assert payload["data"]["reason"] == "refresh_failed"
+        mock_task.send_task.assert_called_once()
+        args = mock_task.send_task.call_args
+        assert args.kwargs["args"][0] == "connection.revoked"
+        assert args.kwargs["args"][1]["data"]["provider"] == "garmin"
+        assert args.kwargs["args"][1]["data"]["reason"] == "refresh_failed"
         # revoked_at is an isoformat() timestamp - colons/offset must be sanitized
-        idempotency_key = call.kwargs["kwargs"]["idempotency_key"]
+        idempotency_key = args.kwargs["kwargs"]["idempotency_key"]
         assert _SVIX_ID_SAFE_RE.match(idempotency_key)
         assert ":" not in idempotency_key
         assert "+" not in idempotency_key
 
     def test_dispatch_swallows_broker_error(self) -> None:
-        """_dispatch silently drops the event when the dispatcher backend fails."""
+        """_dispatch silently drops the event when Celery is unreachable."""
 
-        with patch("app.integrations.task_dispatcher.dispatch_task") as mock_dispatch:
-            mock_dispatch.side_effect = ConnectionError("Redis not available")
+        with patch(
+            "app.services.outgoing_webhooks.events.celery_app",
+        ) as mock_task:
+            mock_task.send_task.side_effect = ConnectionError("Redis not available")
             # Should NOT raise
             _dispatch("workout.created", {"type": "workout.created", "data": {}})
 
@@ -322,7 +304,7 @@ class TestWebhookEmit:
         """With OUTGOING_WEBHOOKS_ENABLED off, nothing is enqueued."""
         with (
             patch("app.services.outgoing_webhooks.svix.is_enabled", return_value=False),
-            patch("app.integrations.task_dispatcher.dispatch_task") as mock_dispatch,
+            patch("app.services.outgoing_webhooks.events.celery_app") as mock_task,
         ):
             on_connection_created(
                 user_id=uuid4(),
@@ -330,7 +312,7 @@ class TestWebhookEmit:
                 connection_id=uuid4(),
                 connected_at="2026-01-01T12:00:00+00:00",
             )
-            mock_dispatch.assert_not_called()
+            mock_task.send_task.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -698,7 +680,7 @@ class TestSyncDataTypePayload:
         with patch("app.services.outgoing_webhooks.svix.is_enabled", return_value=True):
             yield
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
+    @patch("app.services.outgoing_webhooks.events.celery_app")
     def test_separates_what_the_run_wrote_from_what_is_held(self, mock_task: MagicMock) -> None:
         on_sync_data_type_finished(
             user_id=uuid4(),
@@ -718,12 +700,12 @@ class TestSyncDataTypePayload:
             coverage_end="2024-03-31T23:59:00+00:00",
         )
 
-        data = mock_task.call_args.kwargs["args"][1]["data"]
+        data = mock_task.send_task.call_args.kwargs["args"][1]["data"]
         assert data["items_reported"] == 41230
         assert data["written"] == {"start": "2024-01-01T00:00:00+00:00", "end": "2024-03-31T23:59:00+00:00"}
         assert data["coverage"] == {"start": "2019-03-14T06:00:00+00:00", "end": "2024-03-31T23:59:00+00:00"}
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
+    @patch("app.services.outgoing_webhooks.events.celery_app")
     def test_a_failed_type_without_data_has_no_spans(self, mock_task: MagicMock) -> None:
         on_sync_data_type_finished(
             user_id=uuid4(),
@@ -738,7 +720,7 @@ class TestSyncDataTypePayload:
             error_code="authorization_denied",
         )
 
-        data = mock_task.call_args.kwargs["args"][1]["data"]
+        data = mock_task.send_task.call_args.kwargs["args"][1]["data"]
         assert (data["written"], data["coverage"]) == (None, None)
 
 
@@ -761,7 +743,7 @@ class TestDataEventSyncProvenance:
             "source": {"provider": "garmin", "device": "Forerunner 255"},
         }
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
+    @patch("app.services.outgoing_webhooks.events.celery_app")
     def test_timeseries_payload_carries_the_run(self, mock_task: MagicMock) -> None:
         on_timeseries_batch_saved(
             user_id=uuid4(),
@@ -772,10 +754,10 @@ class TestDataEventSyncProvenance:
             sync={"run_id": "pull_abc", "source": "backfill", "scope": "historical"},
         )
 
-        data = mock_task.call_args_list[0].kwargs["args"][1]["data"]
+        data = mock_task.send_task.call_args_list[0].kwargs["args"][1]["data"]
         assert data["sync"] == {"run_id": "pull_abc", "source": "backfill", "scope": "historical"}
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
+    @patch("app.services.outgoing_webhooks.events.celery_app")
     def test_every_chunk_of_a_split_batch_carries_the_run(self, mock_task: MagicMock) -> None:
         sync = {"run_id": "sdk_abc", "source": "sdk", "scope": "historical"}
         on_timeseries_batch_saved(
@@ -787,12 +769,12 @@ class TestDataEventSyncProvenance:
             sync=sync,
         )
 
-        payloads = [c.kwargs["args"][1]["data"] for c in mock_task.call_args_list]
+        payloads = [c.kwargs["args"][1]["data"] for c in mock_task.send_task.call_args_list]
         assert len(payloads) > 2  # split into chunks, two events each
         assert all(p["sync"] == sync for p in payloads)
         assert {p["chunk_index"] for p in payloads} == {0, 1}
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
+    @patch("app.services.outgoing_webhooks.events.celery_app")
     def test_payload_says_null_when_no_run_owns_the_write(self, mock_task: MagicMock) -> None:
         """Seed data and linked-account fan-out write without a run of their own."""
         on_timeseries_batch_saved(
@@ -803,40 +785,39 @@ class TestDataEventSyncProvenance:
             samples=[self._sample("2026-04-16T06:00:00+00:00")],
         )
 
-        assert mock_task.call_args_list[0].kwargs["args"][1]["data"]["sync"] is None
+        assert mock_task.send_task.call_args_list[0].kwargs["args"][1]["data"]["sync"] is None
 
-    def test_bulk_create_samples_captures_the_context_for_the_emit(self, db: Session) -> None:
-        """The emit runs after commit (inline in the fork), outside the run's ContextVar scope."""
+    def test_bulk_create_samples_captures_the_context_for_the_emit_thread(self, db: Session) -> None:
+        """The emit runs in a thread, which a ContextVar does not reach on its own."""
         user = UserFactory()
         db.commit()
         captured: list[tuple] = []
 
         with (
             patch("app.services.timeseries_service.svix_service.is_enabled", return_value=True),
-            patch.object(
-                timeseries_service,
-                "_emit_timeseries_webhooks",
-                side_effect=lambda *args: captured.append(args),
-            ),
-            sync_run_context(SyncRunContext(run_id="pull_abc", source=SyncSource.BACKFILL, scope=SyncScope.HISTORICAL)),
+            patch("app.services.timeseries_service.threading.Thread") as thread,
         ):
-            timeseries_service.bulk_create_samples(
-                db,
-                [
-                    TimeSeriesSampleCreate(
-                        id=uuid4(),
-                        user_id=user.id,
-                        source="garmin",
-                        provider="garmin",
-                        recorded_at=datetime(2026, 4, 16, 6, 0, tzinfo=timezone.utc),
-                        value=62,
-                        series_type=SeriesType.heart_rate,
-                    )
-                ],
-            )
-            db.commit()
+            thread.side_effect = lambda target, args, daemon: captured.append(args) or MagicMock()
+            with sync_run_context(
+                SyncRunContext(run_id="pull_abc", source=SyncSource.BACKFILL, scope=SyncScope.HISTORICAL)
+            ):
+                timeseries_service.bulk_create_samples(
+                    db,
+                    [
+                        TimeSeriesSampleCreate(
+                            id=uuid4(),
+                            user_id=user.id,
+                            source="garmin",
+                            provider="garmin",
+                            recorded_at=datetime(2026, 4, 16, 6, 0, tzinfo=timezone.utc),
+                            value=62,
+                            series_type=SeriesType.heart_rate,
+                        )
+                    ],
+                )
+                db.commit()
 
-        assert captured, "webhooks were never emitted"
+        assert captured, "webhook thread was never started"
         assert captured[0][1] == {
             "run_id": "pull_abc",
             "source": "backfill",
@@ -854,10 +835,10 @@ class TestTimeseriesIdempotencyKey:
 
     @staticmethod
     def _keys(mock_task: MagicMock) -> list[str]:
-        return [c.kwargs["kwargs"]["idempotency_key"] for c in mock_task.call_args_list]
+        return [c.kwargs["kwargs"]["idempotency_key"] for c in mock_task.send_task.call_args_list]
 
     def _emit(self, mock_task: MagicMock, uid: UUID, sync: dict | None) -> list[str]:
-        mock_task.reset_mock()
+        mock_task.send_task.reset_mock()
         on_timeseries_batch_saved(
             user_id=uid,
             provider="garmin",
@@ -870,7 +851,7 @@ class TestTimeseriesIdempotencyKey:
         )
         return self._keys(mock_task)
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
+    @patch("app.services.outgoing_webhooks.events.celery_app")
     def test_separate_runs_over_the_same_window_get_distinct_keys(self, mock_task: MagicMock) -> None:
         uid = uuid4()
         backfill = self._emit(mock_task, uid, {"run_id": "backfill_1", "source": "backfill", "scope": "historical"})
@@ -878,7 +859,7 @@ class TestTimeseriesIdempotencyKey:
 
         assert set(backfill).isdisjoint(live)
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
+    @patch("app.services.outgoing_webhooks.events.celery_app")
     def test_the_same_run_re_emitting_still_dedupes(self, mock_task: MagicMock) -> None:
         """A retried task must not deliver the batch twice."""
         uid = uuid4()
@@ -886,7 +867,7 @@ class TestTimeseriesIdempotencyKey:
 
         assert self._emit(mock_task, uid, sync) == self._emit(mock_task, uid, sync)
 
-    @patch("app.integrations.task_dispatcher.dispatch_task")
+    @patch("app.services.outgoing_webhooks.events.celery_app")
     def test_writes_without_a_run_keep_the_original_key_format(self, mock_task: MagicMock) -> None:
         uid = uuid4()
 

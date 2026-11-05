@@ -4,8 +4,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal, Protocol, runtime_checkable
 from uuid import UUID
 
+from celery import current_app as celery_app
+
+from app.constants.celery_tasks import CeleryQueue, CeleryTask
 from app.database import DbSession
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
 from app.models import EventRecord, User, UserConnection
 from app.repositories.event_record_repository import EventRecordRepository
 from app.repositories.user_connection_repository import UserConnectionRepository
@@ -109,7 +111,7 @@ class ProviderCapabilities:
         Requires ``rest_pull=True``. Currently: Hevy.
     max_historical_days:
         Hard upper limit on how far back the provider allows data to be
-        fetched. ``None`` means no known limit. Garmin: 30 days.
+        fetched. ``None`` means no known limit. Garmin: 30 days, Polar: 365 days.
     """
 
     rest_pull: bool = False
@@ -248,9 +250,10 @@ class BaseProviderStrategy(ABC):
         if not self.capabilities.webhook_registration_api:
             return
 
-        dispatch_task(
-            RegisteredTask.RECONCILE_PROVIDER_WEBHOOKS,
-            kwargs={"provider": self.name, "mode": mode},
+        celery_app.send_task(
+            CeleryTask.RECONCILE_PROVIDER_WEBHOOKS,
+            args=[self.name, mode],
+            queue=CeleryQueue.WEBHOOK_SYNC,
         )
 
     def start_historical_sync(self, user_id: UUID, days: int) -> HistoricalSyncResult:
@@ -264,11 +267,13 @@ class BaseProviderStrategy(ABC):
         if not self.capabilities.rest_pull:
             raise UnsupportedProviderError(self.name, "historical sync")
 
+        if self.capabilities.max_historical_days is not None:
+            days = min(days, self.capabilities.max_historical_days)
         end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=days)
 
-        handle = dispatch_task(
-            RegisteredTask.SYNC_VENDOR_DATA,
+        task = celery_app.send_task(
+            CeleryTask.SYNC_VENDOR_DATA,
             kwargs={
                 "user_id": str(user_id),
                 "start_date": start_date.isoformat(),
@@ -279,7 +284,7 @@ class BaseProviderStrategy(ABC):
         )
 
         return HistoricalSyncResult(
-            task_id=handle.id or "",
+            task_id=task.id,
             method="pull_api",
             message=f"Historical sync queued for {days} days of {self.name} data.",
             days=days,

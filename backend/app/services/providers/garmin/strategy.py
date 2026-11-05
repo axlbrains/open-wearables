@@ -1,12 +1,14 @@
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from app.integrations.task_dispatcher import RegisteredTask, dispatch_task
+from app.integrations.celery.tasks.garmin.backfill_task import start_full_backfill as start_garmin_full_backfill
 from app.services.providers.base_strategy import (
     BaseProviderStrategy,
     HistoricalSyncResult,
     ProviderCapabilities,
     ProviderCoverage,
 )
+from app.services.providers.garmin.backfill_config import MAX_BACKFILL_DAYS
 from app.services.providers.garmin.coverage import (
     HEALTH_SCORES,
     MENSTRUAL_CYCLE_FIELDS,
@@ -70,7 +72,7 @@ class GarminStrategy(BaseProviderStrategy):
         # also supports an async backfill flow (PING → callback URL fetch).
         # There is no plain REST polling path for wellness data; all data
         # arrives via the push/backfill mechanism.
-        return ProviderCapabilities(webhook_stream=True, webhook_callback=True, max_historical_days=30)
+        return ProviderCapabilities(webhook_stream=True, webhook_callback=True, max_historical_days=MAX_BACKFILL_DAYS)
 
     @property
     def coverage(self) -> ProviderCoverage:
@@ -88,15 +90,14 @@ class GarminStrategy(BaseProviderStrategy):
         The ``days`` parameter is ignored - Garmin limits historical access
         to 30 days before the user's consent date.
         """
-        task = dispatch_task(
-            RegisteredTask.START_GARMIN_FULL_BACKFILL,
-            args=[str(user_id)],
-            dedup_key=f"start_garmin_backfill:{user_id}",
-        )
+        end_date = datetime.now(timezone.utc)
+        start_date = end_date - timedelta(days=MAX_BACKFILL_DAYS)
+        task = start_garmin_full_backfill.delay(str(user_id))
         return HistoricalSyncResult(
             task_id=task.id or "",
             method="webhook_backfill",
-            message=f"Garmin {self.capabilities.max_historical_days}-day backfill started. "
-            "Progress available via backfill/status.",
-            days=None,
+            message=f"Garmin {MAX_BACKFILL_DAYS}-day backfill started. Progress available via backfill/status.",
+            days=MAX_BACKFILL_DAYS,
+            start_date=start_date.isoformat(),
+            end_date=end_date.isoformat(),
         )

@@ -10,13 +10,13 @@ unchanged.
 """
 
 from functools import lru_cache
-from logging import getLogger
 
 import redis
 
 from app.config import settings
+from app.utils.structured_logging import get_logger
 
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _redis_configured() -> bool:

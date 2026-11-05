@@ -1,10 +1,10 @@
 from collections.abc import Callable
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from http import HTTPStatus
 from typing import Any, TypeVar
 from uuid import UUID, uuid4
 
-from fastapi import HTTPException, status
 from pydantic import BaseModel, ValidationError
 
 from app.config import settings
@@ -62,10 +62,12 @@ from app.services.providers.templates.base_247_data import Base247DataTemplate
 from app.services.providers.templates.base_oauth import BaseOAuthTemplate
 from app.services.raw_payload_storage import store_raw_payload
 from app.services.timeseries_service import timeseries_service
-from app.utils.conversion import seconds_to_minutes
+from app.utils.conversion import seconds_to_minutes, sum_optional
 from app.utils.dates import offset_to_iso
-from app.utils.sentry_helpers import log_and_capture_error
-from app.utils.structured_logging import log_structured
+from app.utils.exceptions import ProviderError
+from app.utils.structured_logging import get_logger
+
+logger = get_logger(__name__)
 
 _T = TypeVar("_T", bound=BaseModel)
 
@@ -129,12 +131,6 @@ class Polar247Data(Base247DataTemplate):
                 method="GET",
                 params=params,
                 headers=headers,
-                # An optional endpoint answering 401/404 means this athlete's device or
-                # consent does not cover the feature. The branches below already treat
-                # that as "no data"; without this the api_client still logged it as an
-                # error first, ~130 lines a day for one athlete, with no endpoint in the
-                # payload to tell which call it even was.
-                quiet_statuses=() if self._is_core_endpoint(endpoint) else (401, 404),
             )
             store_raw_payload(
                 source="api_response",
@@ -144,25 +140,10 @@ class Polar247Data(Base247DataTemplate):
                 trace_id=endpoint,
             )
             return result
-        except HTTPException as e:
+        except ProviderError as e:
             # 404 = no data for this date / feature not available on this device
-            if e.status_code == status.HTTP_404_NOT_FOUND:
-                return None
-            # 401 on an OPTIONAL endpoint = the user's device/consent doesn't cover that
-            # Polar feature (Elixir & SleepWise are per-device and separately consented);
-            # the same token keeps working for every other endpoint in the same run, so
-            # this is "no data", not an auth failure. A dead token fails earlier, during
-            # refresh, which revokes the connection. Core endpoints stay loud on 401.
-            if e.status_code == status.HTTP_401_UNAUTHORIZED and not self._is_core_endpoint(endpoint):
-                log_structured(
-                    self.logger,
-                    "warning",
-                    f"Polar feature not permitted for this user ({endpoint}); skipping",
-                    provider="polar",
-                    action="polar_endpoint_not_permitted",
-                    endpoint=endpoint,
-                    user_id=str(user_id),
-                )
+            # 204 No Content: api_client fails to parse the empty body as JSON
+            if e.upstream_status in (HTTPStatus.NOT_FOUND, HTTPStatus.NO_CONTENT):
                 return None
             raise
 
@@ -198,8 +179,8 @@ class Polar247Data(Base247DataTemplate):
         try:
             return schema.model_validate(raw)
         except ValidationError as e:
-            log_structured(
-                self.logger, "warning", f"Polar {context} validation error: {e}", provider="polar", user_id=str(user_id)
+            logger.warning(
+                "Polar validation error", provider="polar", context=context, user_id=str(user_id), error=str(e)
             )
             return None
 
@@ -307,12 +288,11 @@ class Polar247Data(Base247DataTemplate):
             if (parsed := self._parse(raw, SleepJSON, user_id, "sleep")) is None:
                 continue
             if not parsed.date or not parsed.sleep_start_time or not parsed.sleep_end_time:
-                log_structured(
-                    self.logger,
-                    "warning",
-                    f"Polar sleep record missing date or start/end time: {parsed.date}",
+                logger.warning(
+                    "Sleep record missing date or start/end time",
                     provider="polar",
                     user_id=str(user_id),
+                    date=parsed.date,
                 )
                 continue
 
@@ -324,6 +304,16 @@ class Polar247Data(Base247DataTemplate):
             light_s = parsed.light_sleep
             deep_s = parsed.deep_sleep
             rem_s = parsed.rem_sleep
+            awake_s = parsed.total_interruption_duration
+            # Sleep Polar couldn't stage (a loose strap, say) is still sleep
+            asleep_s = sum_optional(light_s, deep_s, rem_s, parsed.unrecognized_sleep_stage)
+            # Polar reports no efficiency. Its "actual sleep" share is the night minus its interruptions,
+            # all the time awake between falling asleep and waking up, over the night
+            efficiency_score = (
+                round(Decimal(duration_seconds - awake_s) * 100 / duration_seconds, 2)
+                if awake_s is not None and duration_seconds > 0 and 0 <= awake_s <= duration_seconds
+                else None
+            )
             sleep_stages = self._parse_hypnogram(parsed.hypnogram, start_dt, end_dt) if parsed.hypnogram else None
 
             record = EventRecordCreate(
@@ -345,12 +335,13 @@ class Polar247Data(Base247DataTemplate):
             )
             detail = EventRecordDetailCreate(
                 record_id=sleep_id,
-                sleep_total_duration_minutes=seconds_to_minutes(light_s, deep_s, rem_s),
+                sleep_total_duration_minutes=seconds_to_minutes(asleep_s),
                 sleep_time_in_bed_minutes=duration_seconds // 60 if duration_seconds else None,
+                sleep_efficiency_score=efficiency_score,
                 sleep_deep_minutes=seconds_to_minutes(deep_s),
                 sleep_light_minutes=seconds_to_minutes(light_s),
                 sleep_rem_minutes=seconds_to_minutes(rem_s),
-                sleep_awake_minutes=seconds_to_minutes(parsed.total_interruption_duration),
+                sleep_awake_minutes=seconds_to_minutes(awake_s),
                 sleep_stages=sleep_stages,
             )
 
@@ -367,13 +358,16 @@ class Polar247Data(Base247DataTemplate):
                 components: dict[str, ScoreComponent] = {
                     k: ScoreComponent(value=v) for k, v in raw_components.items() if v is not None
                 }
+                # The wake-up, with the offset Polar's timestamps carry
+                end_offset = end_dt.utcoffset()
                 score = HealthScoreCreate(
                     id=uuid4(),
                     user_id=user_id,
                     provider=ProviderName.POLAR,
                     category=HealthScoreCategory.SLEEP,
                     value=parsed.sleep_score,
-                    recorded_at=start_dt,
+                    recorded_at=end_dt,
+                    zone_offset=offset_to_iso(int(end_offset.total_seconds())) if end_offset is not None else None,
                     components=components or None,
                     event_record_id=sleep_id,
                 )
@@ -462,12 +456,20 @@ class Polar247Data(Base247DataTemplate):
             try:
                 points.append((datetime.fromisoformat(sample.timestamp), sample.steps))
             except ValueError:
-                self.logger.warning("Skipping Polar step sample with an unreadable timestamp")
+                logger.warning(
+                    "Skipping Polar step sample with an unreadable timestamp",
+                    provider="polar",
+                    user_id=str(user_id),
+                )
         points.sort()
         counts = _expand_repeated_steps(points, timedelta(milliseconds=steps.interval_ms))
         if sum(counts.values()) > steps.total_steps:
             # A gap that is not a run of repeats, e.g. the device stopped; keep only what was sent.
-            self.logger.warning("Polar step samples exceed the day's total once expanded; storing them as sent")
+            logger.warning(
+                "Polar step samples exceed the day's total once expanded; storing them as sent",
+                provider="polar",
+                user_id=str(user_id),
+            )
             counts = dict(points)
         return [
             TimeSeriesSampleCreate(
@@ -1080,11 +1082,10 @@ class Polar247Data(Base247DataTemplate):
                 return {"continuous_hr": self._save_timeseries(db, self.normalize_continuous_hr([raw], user_id))}
 
             case _:
-                log_structured(
-                    self.logger,
-                    "warning",
-                    f"Targeted webhook fetch not implemented for event type: {event_type}",
+                logger.warning(
+                    "Targeted webhook fetch not implemented for event type",
                     provider="polar",
+                    event_type=str(event_type),
                 )
                 return {}
 
@@ -1132,11 +1133,12 @@ class Polar247Data(Base247DataTemplate):
                     scores.append(score.model_copy(update={"event_record_id": stored.id}))
                 hr_samples.extend(hr)
             except Exception as e:
-                log_and_capture_error(
-                    e,
-                    self.logger,
+                logger.error(
                     "Failed to save Polar sleep record",
-                    extra={"provider": "polar", "task": "_save_sleep", "user_id": str(user_id)},
+                    exc_info=e,
+                    provider="polar",
+                    task="_save_sleep",
+                    user_id=str(user_id),
                 )
 
         self._save_scores(db, scores)

@@ -17,7 +17,9 @@ from app.services.event_record_service import event_record_service
 from app.services.providers.api_client import make_authenticated_request
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.raw_payload_storage import store_raw_payload
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class SensorBioWorkouts(BaseWorkoutsTemplate):
@@ -49,8 +51,6 @@ class SensorBioWorkouts(BaseWorkoutsTemplate):
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         json_data: dict[str, Any] | None = None,
-        *,
-        quiet_statuses: tuple[int, ...] = (),
     ) -> Any:
         """Make an authenticated request using HTTP/2 and store raw payload.
 
@@ -74,7 +74,6 @@ class SensorBioWorkouts(BaseWorkoutsTemplate):
             headers=headers,
             json_data=json_data,
             http2=True,
-            quiet_statuses=quiet_statuses,
         )
         store_raw_payload(
             source="api_response",
@@ -136,20 +135,18 @@ class SensorBioWorkouts(BaseWorkoutsTemplate):
                 if not (response.get("links") or {}).get("next"):
                     break
             except Exception as e:
-                log_structured(
-                    self.logger,
-                    "error",
-                    f"Error fetching Sensor Bio workout data: {e}",
+                logger.error(
+                    "Error fetching Sensor Bio workout data",
                     provider="sensorbio",
                     task="get_workouts",
+                    error=str(e),
                 )
                 if all_workouts:
-                    log_structured(
-                        self.logger,
-                        "warning",
-                        f"Returning partial workout data due to error: {e}",
+                    logger.warning(
+                        "Returning partial workout data due to error",
                         provider="sensorbio",
                         task="get_workouts",
+                        error=str(e),
                     )
                     break
                 raise

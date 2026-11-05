@@ -1,4 +1,3 @@
-from logging import getLogger
 from typing import Annotated
 from uuid import UUID
 
@@ -13,12 +12,12 @@ from app.repositories.api_key_repository import ApiKeyRepository
 from app.repositories.developer_repository import DeveloperRepository
 from app.schemas.auth import SDKAuthContext
 from app.utils.security import hash_api_key
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 developer_repository = DeveloperRepository(Developer)
 api_key_repository = ApiKeyRepository(ApiKey)
-logger = getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def validate_api_key(db: DbSession, key: str | None) -> ApiKey:
@@ -151,18 +150,14 @@ async def get_sdk_auth(
             api_key = validate_api_key(db, x_open_wearables_api_key)
             return SDKAuthContext(auth_type="api_key", api_key_id=str(api_key.id))
         except HTTPException:
-            log_structured(
-                logger,
-                "warning",
+            logger.warning(
                 "SDK auth rejected",
                 action="sdk_auth_reject",
                 reason="bad_api_key" if reject_reason == "missing" else f"{reject_reason}_then_bad_api_key",
             )
             raise  # preserve original "Invalid or missing API key" detail
 
-    log_structured(
-        logger,
-        "warning",
+    logger.warning(
         "SDK auth rejected",
         action="sdk_auth_reject",
         reason=reject_reason,

@@ -5,7 +5,6 @@ EventRecords + WorkoutDetails in the database.
 """
 
 from decimal import Decimal
-from logging import Logger, getLogger
 from uuid import UUID, uuid4
 
 from app.database import DbSession
@@ -13,6 +12,7 @@ from app.schemas.enums import EventCategory
 from app.schemas.model_crud.activities.event_record import EventRecordCreate
 from app.schemas.model_crud.activities.event_record_detail import EventRecordDetailCreate
 from app.services.event_record_service import event_record_service
+from app.utils.structured_logging import get_logger
 
 from .runkeeper import parse_runkeeper_csv
 
@@ -22,8 +22,8 @@ SUPPORTED_FORMATS = {"runkeeper"}
 class CSVImportService:
     """Import workout data from CSV exports of various fitness platforms."""
 
-    def __init__(self, log: Logger | None = None) -> None:
-        self.log = log or getLogger(__name__)
+    def __init__(self) -> None:
+        self.log = get_logger(__name__)
 
     def import_csv(
         self,
@@ -47,7 +47,7 @@ class CSVImportService:
             raise ValueError(f"Unsupported CSV format: {source_format}. Supported: {SUPPORTED_FORMATS}")
 
         workouts = self._parse(content, source_format)
-        self.log.info("Parsed %d workouts from %s CSV for user %s", len(workouts), source_format, user_id)
+        self.log.info("Parsed CSV workouts", count=len(workouts), source_format=source_format, user_id=str(user_id))
 
         if not workouts:
             return {"imported": 0, "skipped": 0, "total": 0}
@@ -99,11 +99,11 @@ class CSVImportService:
         imported = len(inserted_ids)
         skipped = len(records) - imported
         self.log.info(
-            "CSV import complete for user %s: %d imported, %d skipped (duplicates), %d total",
-            user_id,
-            imported,
-            skipped,
-            len(records),
+            "CSV import complete",
+            user_id=str(user_id),
+            imported=imported,
+            skipped_duplicates=skipped,
+            total=len(records),
         )
 
         return {"imported": imported, "skipped": skipped, "total": len(records)}

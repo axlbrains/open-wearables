@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Iterable
@@ -27,10 +26,9 @@ from app.services.providers.api_client import download_binary_content
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.timeseries_service import timeseries_service
 from app.utils.dates import offset_to_iso
-from app.utils.sentry_helpers import log_and_capture_error
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PolarWorkouts(BaseWorkoutsTemplate):
@@ -80,15 +78,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         start_time_utc_offset: int,
         duration: str,
     ) -> tuple[datetime, datetime]:
-        """Convert Polar's local wall-clock start into the UTC instant it happened at.
-
-        ``start_time`` is naive LOCAL time and ``start_time_utc_offset`` is that local
-        zone's offset in minutes, so UTC is local MINUS the offset. Adding it instead put
-        every exercise ``2 x offset`` into the future -- four hours in summer -- which is
-        why a workout's own FIT samples, whose timestamps are true UTC, never fell inside its
-        window. Verified against Polar for exercise Pvkk9DWJ: start_time 09:20:47 with
-        offset 120 is 07:20:47 UTC, and its first FIT sample is 07:20:48.
-        """
+        """Start and end in UTC: ``start_time`` is naive local time, ``start_time_utc_offset`` its offset in minutes."""
         local_start = isodate.parse_datetime(start_time)
         offset = timedelta(minutes=start_time_utc_offset)
         start_date = local_start - offset
@@ -189,7 +179,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
             except ValidationError as exc:
                 logger.warning(
                     "Skipping malformed Polar exercise",
-                    extra={
+                    **{
                         "action": "polar_workout_partial_data",
                         "user_id": str(user_id),
                         "exercise_id": raw_exercise.get("id") if isinstance(raw_exercise, dict) else None,
@@ -294,9 +284,7 @@ class PolarWorkouts(BaseWorkoutsTemplate):
                 # Phone-logged and manually entered exercises have no recorded file.
                 # A permanent property of the exercise, so this stays quiet rather than
                 # re-reporting on every sync window that re-covers it.
-                log_structured(
-                    self.logger,
-                    "info",
+                logger.info(
                     "Polar exercise has no FIT file; keeping JSON metrics only",
                     provider="polar",
                     action="polar_fit_absent",
@@ -304,19 +292,17 @@ class PolarWorkouts(BaseWorkoutsTemplate):
                     user_id=str(user_id),
                 )
                 return None
-            log_and_capture_error(
-                exc,
-                self.logger,
+            logger.error(
                 "Failed to download Polar FIT file, keeping JSON metrics only",
-                extra={"exercise_id": exercise_id},
+                exc_info=exc,
+                **{"exercise_id": exercise_id},
             )
             return None
         except Exception as exc:
-            log_and_capture_error(
-                exc,
-                self.logger,
+            logger.error(
                 "Failed to download Polar FIT file, keeping JSON metrics only",
-                extra={"exercise_id": exercise_id},
+                exc_info=exc,
+                **{"exercise_id": exercise_id},
             )
             return None
 
@@ -349,11 +335,10 @@ class PolarWorkouts(BaseWorkoutsTemplate):
         try:
             parsed = parse_fit_file(fit_bytes, user_id, source=self.provider_name)
         except Exception as exc:
-            log_and_capture_error(
-                exc,
-                self.logger,
+            logger.error(
                 "Failed to parse Polar FIT file, keeping JSON metrics only",
-                extra={"exercise_id": raw_workout.id},
+                exc_info=exc,
+                **{"exercise_id": raw_workout.id},
             )
             return 0
 
@@ -383,17 +368,14 @@ class PolarWorkouts(BaseWorkoutsTemplate):
                 nested.commit()
             except Exception as exc:
                 nested.rollback()
-                log_and_capture_error(
-                    exc,
-                    self.logger,
+                logger.error(
                     "Polar FIT sample ingestion failed; workout still saved",
-                    extra={"exercise_id": raw_workout.id, "sample_count": len(samples)},
+                    exc_info=exc,
+                    **{"exercise_id": raw_workout.id, "sample_count": len(samples)},
                 )
                 samples = []
 
-        log_structured(
-            self.logger,
-            "info",
+        logger.info(
             "Parsed Polar FIT file",
             provider="polar",
             action="polar_fit_ingested",

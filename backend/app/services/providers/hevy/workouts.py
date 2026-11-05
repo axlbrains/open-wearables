@@ -30,7 +30,9 @@ from app.services.event_record_service import event_record_service
 from app.services.providers.base_strategy import IncompleteSyncError
 from app.services.providers.templates.base_workouts import BaseWorkoutsTemplate
 from app.services.raw_payload_storage import store_raw_payload
-from app.utils.structured_logging import log_structured
+from app.utils.structured_logging import get_logger
+
+logger = get_logger(__name__)
 
 # Hevy caps pageSize at 10 (both /v1/workouts and /v1/workouts/events).
 _PAGE_SIZE = 10
@@ -176,19 +178,8 @@ class HevyWorkouts(BaseWorkoutsTemplate):
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
         json_data: dict[str, Any] | None = None,
-        *,
-        quiet_statuses: tuple[int, ...] = (),  # noqa: ARG002
     ) -> Any:
-        """Request with the user's stored API key; 401 marks the connection revoked.
-
-        ``quiet_statuses`` is accepted to keep this substitutable for the base
-        template, but has nothing to act on: this path calls httpx directly and never
-        goes through the api_client's error logging it exists to suppress.
-
-        Bypasses make_authenticated_request: there is no Bearer token and no
-        refresh flow — a rejected key can only be replaced by the user
-        submitting a new one.
-        """
+        """Request with the user's stored API key; 401 marks the connection revoked."""
         connection, api_key = self._get_connection(db, user_id)
         request_headers = {"api-key": api_key, **(headers or {})}
         response = httpx.request(
@@ -202,9 +193,7 @@ class HevyWorkouts(BaseWorkoutsTemplate):
         if response.status_code == 401:
             # Key regenerated or Pro subscription lapsed — dead until the user reconnects.
             self.connection_repo.mark_as_revoked(db, connection)
-            log_structured(
-                self.logger,
-                "warning",
+            logger.warning(
                 "Hevy API key rejected (401); connection marked revoked",
                 provider=self.provider_name,
                 task="api_request",
@@ -248,10 +237,10 @@ class HevyWorkouts(BaseWorkoutsTemplate):
                 )
                 page_events, page_count = _parse_events_page(response)
             except Exception as e:
-                log_structured(
-                    self.logger,
-                    "error",
-                    f"Error fetching Hevy workout events (page {page}): {e}",
+                logger.error(
+                    "Error fetching Hevy workout events",
+                    exc_info=e,
+                    page=page,
                     provider=self.provider_name,
                     task="get_workout_events",
                 )
@@ -336,10 +325,9 @@ class HevyWorkouts(BaseWorkoutsTemplate):
             try:
                 record, detail = self._normalize_workout(raw_workout, user_id)
             except ValidationError as e:
-                log_structured(
-                    self.logger,
-                    "error",
-                    f"Skipping malformed Hevy workout: {e}",
+                logger.error(
+                    "Skipping malformed Hevy workout",
+                    exc_info=e,
                     provider=self.provider_name,
                     task="load_data",
                 )
@@ -350,10 +338,9 @@ class HevyWorkouts(BaseWorkoutsTemplate):
         for external_id in deleted_ids:
             deleted = self.workout_repo.delete_by_external_id(db, user_id, external_id, source=self.provider_name)
             if deleted:
-                log_structured(
-                    self.logger,
-                    "info",
-                    f"Deleted Hevy workout {external_id} (removed in Hevy)",
+                logger.info(
+                    "Deleted Hevy workout (removed in Hevy)",
+                    external_id=external_id,
                     provider=self.provider_name,
                     task="load_data",
                 )
@@ -412,10 +399,9 @@ class HevyWorkouts(BaseWorkoutsTemplate):
         )
         if clash is not None:
             db.rollback()
-            log_structured(
-                self.logger,
-                "warning",
-                f"Skipping Hevy workout {record.external_id}: its new times collide with another workout",
+            logger.warning(
+                "Skipping Hevy workout: its new times collide with another workout",
+                external_id=record.external_id,
                 provider=self.provider_name,
                 task="load_data",
             )
