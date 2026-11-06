@@ -1,6 +1,6 @@
 [project]
 name = "open-wearables"
-version = "0.12.1"
+version = "0.12.2"
 description = ""
 requires-python = ">=3.14"
 dependencies = [
@@ -13,6 +13,8 @@ dependencies = [
     "fastapi-cli>=0.0.32",
     "celery>=5.6.3",
     "flower>=2.2.0",
+    "tornado>=6.6",  # CVE-2026-115927, -116577, -116578 (via flower)
+    "pyasn1>=0.6.5",  # CVE-2026-119194..119197 (transitive)
     "redis>=8.1.0",
     "sentry-sdk[fastapi]>=2.73.0",
     "python-multipart>=0.0.33",
